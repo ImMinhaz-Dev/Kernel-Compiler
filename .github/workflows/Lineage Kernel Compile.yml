@@ -1,139 +1,107 @@
-#
-# GitHub Actions workflow for compiling a custom LineageOS kernel.
-#
-# This workflow automates the following steps:
-# 1. Sets up an Ubuntu environment with all necessary dependencies.
-# 2. Clones the specified kernel source and AnyKernel3 repositories.
-# 3. Configures the build environment with user-defined parameters.
-# 4. Compiles the kernel using ccache for faster subsequent builds.
-# 5. Packages the compiled kernel, DTB, DTBO, and modules into a flashable zip.
-# 6. Uploads the final flashable zip as a workflow artifact.
-#
-
 name: Lineage Kernel Compiling
 
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push events but only for the main branch
-  push:
-    branches: [ "main" ]
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+env:
+  BUILD_NAME: compiler...
+  ARCH: arm64
+  SUBARCH: arm64
+  KBUILD_BUILD_USER: MINHAZ
+  KBUILD_BUILD_HOST: POTATO
+  KERNEL_SOURCE_REPO: https://github.com/ImMinhaz-Dev/kernel_xiaomi_sm6250.git
+  KERNEL_BRANCH: lineage-22.2
+  ANYKERNEL3_REPO: https://github.com/ImMinhaz-Dev/anykernel3.git
+  ANYKERNEL3_BRANCH: master
+  CCACHE_DIR: ~/.ccache
+
 jobs:
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
-    name: Build LineageOS Kernel for Redmi Note 9 Pro (curtana)
-
+  build_kernel:
+    name: ${{ env.BUILD_NAME }}
+    runs-on: ubuntu-23.10 # Using ubuntu-latest for simplicity, but you specified 23.10, so a custom runner or a newer official image might be needed if 23.10 isn't directly available. For now, this will default to a recent Ubuntu.
+    
     steps:
-      # Step 1: Set up the build environment and install dependencies
-      - name: Install Build Dependencies
-        run: |
-          # Update package lists
-          sudo apt-get update
-          # Install essential packages for kernel compilation
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32readline-dev lib32z1-dev libdw-dev libelf-dev liblz4-tool libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush protobuf-compiler python3-protobuf rsync schedtool squashfs-tools xsltproc zip zlib1g-dev openjdk-11-jdk
-          # The python-is-python3 package might not be available on newer distros, create a symlink instead
-          sudo ln -sf /usr/bin/python3 /usr/bin/python
-          # Install specific ncurses5 libraries required for older build systems on newer Ubuntu
-          echo "Installing ncurses5 compatibility libraries..."
-          wget https://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2_amd64.deb
-          sudo dpkg -i libtinfo5_6.3-2_amd64.deb
-          rm -f libtinfo5_6.3-2_amd64.deb
-          wget https://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2_amd64.deb
-          sudo dpkg -i libncurses5_6.3-2_amd64.deb
-          rm -f libncurses5_6.3-2_amd64.deb
-          echo "Dependencies installed successfully."
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.KERNEL_SOURCE_REPO }}
+        ref: ${{ env.KERNEL_BRANCH }}
+        path: kernel_source
 
-      # Step 2: Clone the kernel source code
-      - name: Clone Kernel Source
-        uses: actions/checkout@v4
-        with:
-          path: kernel_xiaomi_sm6250
-          repository: ImMinhaz-Dev/kernel_xiaomi_sm6250
-          ref: lineage-22.2
+    - name: Checkout AnyKernel3
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.ANYKERNEL3_REPO }}
+        ref: ${{ env.ANYKERNEL3_BRANCH }}
+        path: anykernel3
 
-      # Step 3: Clone AnyKernel3 repository
-      - name: Clone AnyKernel3
-        uses: actions/checkout@v4
-        with:
-          path: anykernel3
-          repository: ImMinhaz-Dev/anykernel3
-          ref: master
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y bc bison build-essential binutils ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick protobuf-compiler python-is-python3 python3-protobuf openjdk-11-jdk lib32readline-dev lib32z1-dev libdw-dev libelf-dev lz4 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
 
-      # Step 4: Set up ccache for faster builds
-      - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ github.job }}-${{ runner.os }}
-          # Path to the ccache directory
-          path: ~/.ccache
+    - name: Install ncurses5 for Ubuntu 23.10
+      run: |
+        wget https://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2_amd64.deb
+        sudo dpkg -i libtinfo5_6.3-2_amd64.deb
+        rm -f libtinfo5_6.3-2_amd64.deb
 
-      # Step 5: Compile the kernel
-      - name: Compile Kernel
-        run: |
-          # Set environment variables for the build
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export KBUILD_BUILD_USER="MINHAZ"
-          export KBUILD_BUILD_HOST="POTATO"
-          export USE_CCACHE=1
-          export CCACHE_EXEC=$(which ccache)
-          
-          # Navigate to the kernel source directory
-          cd kernel_xiaomi_sm6250
+        wget https://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2_amd64.deb
+        sudo dpkg -i libncurses5_6.3-2_amd64.deb
+        rm -f libncurses5_6.3-2_amd64.deb
 
-          # Clean the source tree
-          echo "Cleaning kernel source..."
-          make mrproper
-          make clean
-          
-          # Create the output directory
-          mkdir -p out
-          
-          # Generate the kernel config
-          echo "Generating .config for miatoll..."
-          make O=out vendor/xiaomi/miatoll_defconfig
-          
-          # Start the compilation
-          echo "Starting kernel compilation..."
-          make O=out -j$(nproc --all)
-          
-          echo "Kernel compilation finished."
+    - name: Configure CCACHE
+      run: |
+        echo "USE_CCACHE=1" >> $GITHUB_ENV
+        echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
+        mkdir -p ${{ env.CCACHE_DIR }}
+        echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV # Ensure CCACHE_DIR is set for subsequent steps
+        ccache -M 20G # Set ccache size to 20GB (adjust as needed)
 
-      # Step 6: Package the kernel with AnyKernel3
-      - name: Package with AnyKernel3
-        run: |
-          # Navigate to the AnyKernel3 directory
-          cd anykernel3
-          
-          # Get the compiler version string
-          COMPILER_STRING=$(cd ../kernel_xiaomi_sm6250/out/include/generated/compile.h && awk -F'"' '/UTS_VERSION/ {print $2}')
-          
-          # Customize anykernel.sh with the compiler info
-          sed -i "s/kernel.compiler=.*/kernel.compiler=$COMPILER_STRING/" anykernel.sh
-          
-          # Copy compiled kernel files to AnyKernel3 directory
-          echo "Copying compiled files to AnyKernel3..."
-          cp ../kernel_xiaomi_sm6250/out/arch/arm64/boot/Image.gz ./
-          cp ../kernel_xiaomi_sm6250/out/arch/arm64/boot/dtbo.img ./
-          cp ../kernel_xiaomi_sm6250/out/arch/arm64/boot/dtb.img ./
-          
-          # Find and copy kernel modules
-          MODULE_DIR=modules/system/lib/modules
-          mkdir -p $MODULE_DIR
-          find ../kernel_xiaomi_sm6250/out -name "*.ko" -exec cp {} $MODULE_DIR/ \;
-          
-          # Create the flashable zip
-          echo "Creating flashable zip..."
-          zip -r9 Flashable-Kernel-Miatoll.zip * -x .git README.md
-          
-          echo "Packaging complete."
+    - name: Prepare Kernel Source
+      working-directory: kernel_source
+      run: |
+        make mrproper
+        make clean
+        mkdir -p out
 
-      # Step 7: Upload the flashable zip as an artifact
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Miatoll-Flashable-Kernel
-          path: anykernel3/Flashable-Kernel-Miatoll.zip
+    - name: Generate .config
+      working-directory: kernel_source
+      run: |
+        make O=out ARCH=${{ env.ARCH }} SUBARCH=${{ env.SUBARCH }} vendor/xiaomi/miatoll_defconfig
+
+    - name: Compile Kernel
+      working-directory: kernel_source
+      run: |
+        export KBUILD_BUILD_USER="${{ env.KBUILD_BUILD_USER }}"
+        export KBUILD_BUILD_HOST="${{ env.KBUILD_BUILD_HOST }}"
+        make O=out ARCH=${{ env.ARCH }} SUBARCH=${{ env.SUBARCH }} -j$(nproc --all)
+
+    - name: Customize AnyKernel3 and Copy Files
+      working-directory: ${{ github.workspace }}
+      run: |
+        # Customize AnyKernel.sh
+        sed -i 's/kernel.compiler=.*/kernel.compiler=LineageOS-Kernel-Compiler-by-MINHAZ/g' anykernel3/anykernel.sh
+
+        # Copy kernel images to AnyKernel3
+        cp kernel_source/out/arch/${{ env.ARCH }}/boot/Image.gz anykernel3/
+        cp kernel_source/out/dtbo.img anykernel3/
+        cp kernel_source/out/dtb.img anykernel3/
+
+        # Copy modules if they exist (adjust path if different)
+        # Check if modules directory exists and copy contents
+        if [ -d "kernel_source/out/lib/modules" ]; then
+          mkdir -p anykernel3/modules/system/lib/modules
+          cp -r kernel_source/out/lib/modules/* anykernel3/modules/system/lib/modules/
+        fi
+
+    - name: Create Flashable Zip
+      working-directory: anykernel3
+      run: |
+        zip -r9 ${{ github.workspace }}/Lineage_Kernel_Curtana_MINHAZ.zip * -x .git README.md
+
+    - name: Upload Flashable Zip as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Lineage-Kernel-Curtana
+        path: Lineage_Kernel_Curtana_MINHAZ.zip
