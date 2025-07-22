@@ -1,206 +1,95 @@
 name: OSS Kernel compiling
 
 on:
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 jobs:
-  compiler:
-    name: compiler...
-    # Use Ubuntu 22.04 as the operating system for the runner
+  build:
+    name: ${{ github.event.repository.name }} - ${{ github.ref_name }} - compiler...
     runs-on: ubuntu-22.04
 
     steps:
-      # Step 1: Checkout the kernel source repository and specified branch
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          repository: MiCode/Xiaomi_Kernel_OpenSource
+          repository: MiCode/Xiaomi_Kernel_OpenSource.git
           ref: curtana-q-oss
-          path: kernel_src # Clone into a directory named 'kernel_src'
+          path: kernel_source
 
-      # Step 2: Checkout the AnyKernel3 repository and specified branch
-      - name: Checkout AnyKernel3
+      - name: Checkout Anykernel3
         uses: actions/checkout@v4
         with:
-          repository: ImMinhaz-Dev/anykernel3
+          repository: ImMinhaz-Dev/anykernel3.git
           ref: master
-          path: anykernel3 # Clone into a directory named 'anykernel3'
+          path: anykernel3
 
-      # Step 3: Install Build Dependencies
-      - name: Install Build Dependencies
+      - name: Install Dependencies
         run: |
-          echo "Updating apt package list..."
-          sudo apt-get update -y
-          echo "Installing essential build tools and libraries..."
-          sudo apt-get install -y \
-            bc bison build-essential binutils ccache curl flex \
-            git libncurses5 libncurses5-dev libdw-dev libelf-dev lz4 \
-            libssl-dev lzop zip zlib1g-dev device-tree-compiler
-          echo "All essential dependencies installed."
+          sudo apt update
+          sudo apt install -y build-essential git flex bison bc libssl-dev libncurses-dev libelf-dev libudev-dev \
+            fakeroot xz-utils gawk python3 dwarves ccache libiberty-dev pkg-config autoconf uuid-dev libjson-c-dev libzstd-dev squashfs-tools
 
-      # Step 4: Download and Set up the ARM GNU Toolchain
-      - name: Download and Setup ARM GNU Toolchain
+      - name: Download and Setup Toolchain
         run: |
-          # The exact toolchain URL provided by the user
-          TOOLCHAIN_URL="https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"
-          TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain" # Standard directory for toolchain
-
-          echo "Creating toolchain directory: $TOOLCHAIN_DIR"
+          TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain"
           mkdir -p "$TOOLCHAIN_DIR"
-          
-          echo "Downloading and extracting toolchain from $TOOLCHAIN_URL..."
-          # Use curl to download and pipe directly to tar for extraction
-          # The -L flag handles redirects, and -xJ extracts .xz compressed files
-          curl -L "$TOOLCHAIN_URL" | tar -xJ -C "$TOOLCHAIN_DIR" --strip-components=1
-          echo "Toolchain extracted."
-          
-          echo "Adding toolchain bin directory to PATH for this step and subsequent steps..."
-          # Add the toolchain's bin directory to the GitHub Actions PATH environment variable
-          # This makes it available for subsequent steps.
+          curl -L "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz" | sudo tar -xJ --strip-components=1 -C "$TOOLCHAIN_DIR"
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
-          
-          # Explicitly update PATH for the current shell session within this run block
-          # This ensures 'aarch64-none-linux-gnu-gcc' is found for immediate verification.
-          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
-          
-          echo "Verifying toolchain installation..."
-          # Verify the toolchain by checking its version
-          aarch64-none-linux-gnu-gcc --version
-          echo "Toolchain verification complete."
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH" # Set PATH for current step as well
 
-      # Step 5: Set up ccache for caching build artifacts
-      - name: Setup ccache
+      - name: Verify Toolchain
+        run: |
+          export PATH="/opt/toolchains/arm-gnu-toolchain/bin:$PATH"
+          aarch64-none-linux-gnu-gcc --version
+          aarch64-none-linux-gnu-ld --version
+
+      - name: Configure CCACHE
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          # Use the job name as the cache key
-          key: ${{ github.job }}
-          # Restore cache based on the job name
-          restore-keys: ${{ github.job }}
-          # Set the maximum ccache size to 2GB
+          key: ${{ github.sha }}
           max-size: 2G
-        
-      # Step 6: Prepare the kernel source for building
-      - name: Prepare Kernel Source
-        run: |
-          echo "Navigating to kernel source directory: kernel_src"
-          cd kernel_src
-          echo "Cleaning kernel source with make mrproper..."
-          make mrproper # Clean the kernel source tree
-          echo "Cleaning kernel source with make clean..."
-          make clean    # Further clean the kernel source tree
-          echo "Creating 'out' directory for build artifacts..."
-          mkdir -p out  # Create the output directory inside the kernel source
 
-          echo "Temporarily renaming scripts/dtc to force system DTC usage..."
-          # This is a more aggressive fix for the 'yylloc' error.
-          # It prevents the kernel build system from finding its internal dtc source,
-          # forcing it to use the system-installed 'device-tree-compiler'.
-          mv scripts/dtc scripts/dtc_bak
-          echo "scripts/dtc renamed to scripts/dtc_bak."
-
-      # Step 7: Build the kernel
-      - name: Build Kernel
-        # Set environment variables for the entire step
-        env:
-          USE_CCACHE: 1
-          CCACHE_EXEC: $(which ccache)
-          HOSTCC: gcc # Explicitly set host compiler for host tools
-          HOSTLD: ld   # Explicitly set host linker for host tools
-          # Attempt to clear problematic linker flags for the kernel build
-          # This is a more direct way to try and remove the erratum flag.
-          KBUILD_LDFLAGS: "" # Clear KBUILD_LDFLAGS
-          LDFLAGS: ""        # Clear general LDFLAGS
-          # Attempt to clear any DTC specific CFLAGS/CPPFLAGS if they are causing issues
-          DTC_CPP_FLAGS: ""
+      - name: Clean Kernel Source
         run: |
-          echo "Navigating to kernel source directory: kernel_src"
-          cd kernel_src
-          
-          echo "Generating initial .config using vendor/atoll-perf_defconfig..."
-          # Generate the initial .config file for the kernel build
+          cd kernel_source
+          make mrproper
+          make clean
+
+      - name: Create Output Directory
+        run: mkdir kernel_source/out
+
+      - name: Configure Kernel
+        run: |
+          cd kernel_source
           make O=out ARCH=arm64 SUBARCH=arm64 vendor/atoll-perf_defconfig
-          
-          echo "Modifying .config to remove problematic linker flag support..."
-          # Remove any lines related to CONFIG_ARM64_ERRATUM_843419 from the .config
-          # This addresses the "ld does not support --fix-cortex-a53-843419" error.
-          # We use a more generic regex to catch variations if they exist.
-          sed -i '/CONFIG_ARM64_ERRATUM_843419/d' out/.config
-          
-          echo "Updating .config with default values for new options (olddefconfig)..."
-          # Run make olddefconfig to apply default values for any new or unset options
-          # This prevents interactive prompts in the CI environment and ensures consistency
-          # after the sed modification.
-          make O=out ARCH=arm64 SUBARCH=arm64 olddefconfig
-          
-          echo "Starting kernel compilation..."
-          # Compile the kernel using all available CPU cores (-j$(nproc))
-          # Specify output directory, architecture, sub-architecture, cross-compiler,
-          # and custom build user/host names.
-          # DTC is explicitly set to use the system's installed device-tree-compiler.
-          make -j$(nproc) O=out \
-               ARCH=arm64 \
-               SUBARCH=arm64 \
-               CC="ccache aarch64-none-linux-gnu-gcc" \
-               DTC=dtc \
-               KBUILD_BUILD_USER="MINHAZ" \
-               KBUILD_BUILD_HOST="POTATO"
-          echo "Kernel compilation complete."
 
-      # Step 8: Prepare AnyKernel3 with compiled kernel artifacts
-      - name: Prepare AnyKernel3 for Packaging
+      - name: Compile Kernel
         run: |
-          echo "Navigating back to kernel source directory for cleanup..."
-          cd kernel_src
-          # Rename scripts/dtc_bak back to scripts/dtc if needed for other operations
-          # (though not strictly necessary for this workflow's current scope)
-          # mv scripts/dtc_bak scripts/dtc
-          
-          echo "Creating modules directory in AnyKernel3 if it doesn't exist..."
-          # Create the directory for kernel modules within AnyKernel3 structure
-          mkdir -p ../anykernel3/modules/system/lib/modules
-          
-          echo "Copying compiled kernel images to AnyKernel3 root..."
-          # Copy the compiled kernel image, dtbo, and dtb to the AnyKernel3 root directory
-          cp out/arch/arm64/boot/Image.gz ../anykernel3/
-          cp out/arch/arm64/boot/dtbo.img ../anykernel3/
-          cp out/arch/arm64/boot/dtb.img ../anykernel3/
-          
-          echo "Copying kernel modules (*.ko) to AnyKernel3 modules path..."
-          # Find all kernel modules (.ko files) in the kernel output directory and copy them
-          find out -name "*.ko" -exec cp {} ../anykernel3/modules/system/lib/modules/ \;
-          
-          echo "Navigating to AnyKernel3 directory for customization..."
-          cd ../anykernel3
-          
-          echo "Customizing anykernel.sh file..."
-          # Customize the kernel.string in anykernel.sh using '@' as delimiter
-          sed -i 's@kernel.string=.*@kernel.string=OSS Kernel by MINHAZ@POTATO@g' anykernel.sh
-          # Customize the kernel.compiler string in anykernel.sh using '@' as delimiter
-          sed -i 's@kernel.compiler=.*@kernel.compiler=GCC 14.3 (Arm GNU Toolchain)@g' anykernel.sh
-          echo "AnyKernel3 preparation complete."
+          cd kernel_source
+          export KBUILD_BUILD_USER="MINHAZ"
+          export KBUILD_BUILD_HOST="POTATO"
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          export CC="ccache aarch64-none-linux-gnu-gcc"
+          make -j$(nproc) O=out ARCH=arm64 SUBARCH=arm64
 
-      # Step 9: Create the flashable ZIP file using AnyKernel3
-      - name: Create Flashable Zip
-        id: create_zip # Assign an ID to this step to access its outputs
+      - name: Customize Anykernel3
         run: |
-          echo "Navigating to AnyKernel3 directory..."
           cd anykernel3
-          # Define the name of the flashable ZIP file with a timestamp
-          ZIP_NAME="OSS-Kernel-MINHAZ-POTATO-$(date +%Y%m%d-%H%M).zip"
-          echo "Creating flashable zip: $ZIP_NAME"
-          # Create the ZIP file, excluding .git directory and README.md
-          zip -r9 "$ZIP_NAME" * -x ".git" "README.md"
-          echo "Flashable zip created."
-          # Output the name of the created ZIP file, which can be used by subsequent steps
-          echo "zip_file=$ZIP_NAME" >> $GITHUB_OUTPUT
+          sed -i 's/kernel.string=.*/kernel.string=OSS Kernel/' anykernel.sh
+          sed -i 's/kernel.compiler=.*/kernel.compiler=aarch64-none-linux-gnu-gcc (GCC) 14.3.0/' anykernel.sh # Adjust compiler version if different
 
-      # Step 10: Upload the generated flashable ZIP as a workflow artifact
-      - name: Upload Flashable Zip as Artifact
+      - name: Package Kernel
+        run: |
+          cp kernel_source/out/arch/arm64/boot/Image.gz anykernel3/
+          cp kernel_source/out/arch/arm64/boot/dtbo.img anykernel3/
+          cp kernel_source/out/arch/arm64/boot/dtb.img anykernel3/
+          find kernel_source/out/modules -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \; || true # Copy modules if they exist
+          cd anykernel3
+          zip -r9 "OSS-Kernel-Curtana-${{ github.run_id }}.zip" * -x .git
+
+      - name: Upload Flashable Zip
         uses: actions/upload-artifact@v4
         with:
-          # Use the ZIP file name from the previous step's output as the artifact name
-          name: ${{ steps.create_zip.outputs.zip_file }}
-          # Specify the path to the created ZIP file
-          path: anykernel3/${{ steps.create_zip.outputs.zip_file }}
-          retention-days: 7 # Retain the artifact for 7 days
+          name: OSS-Kernel-Curtana
+          path: anykernel3/OSS-Kernel-Curtana-*.zip
