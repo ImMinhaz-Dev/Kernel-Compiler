@@ -1,0 +1,105 @@
+# GitHub Actions workflow to compile a custom LineageOS kernel
+
+name: Lineage Kernel Compiling
+
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build:
+    # The name of the job that will be displayed on GitHub
+    name: Build Kernel for Redmi Note 9 Pro (curtana)
+    # The type of runner that the job will run on
+    runs-on: ubuntu-20.04
+
+    steps:
+      # Step 1: Checkout the repository (if the workflow is in the same repo)
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Install all the required dependencies for building the kernel
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
+            lib32z1-dev libdw-dev libelf-dev libncurses5 libncurses5-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lz4 lzop pngcrush protobuf-compiler \
+            python-is-python3 python3-protobuf rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev openjdk-11-jdk
+
+      # Step 3: Set up user-defined PATH in ~/.profile
+      - name: Setup PATH
+        run: |
+          if [ -d "$HOME/bin" ] ; then
+              PATH="$HOME/bin:$PATH"
+          fi
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      # Step 4: Clone the kernel source code
+      - name: Clone kernel source
+        run: git clone --depth=1 https://github.com/ImMinhaz-Dev/kernel_xiaomi_sm6250.git -b lineage-22.2 kernel
+
+      # Step 5: Clone the AnyKernel3 repository
+      - name: Clone AnyKernel3
+        run: git clone --depth=1 https://github.com/ImMinhaz-Dev/anykernel3.git -b master anykernel
+
+      # Step 6: Set up build environment and variables
+      - name: Setup build environment
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=MINHAZ" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=POTATO" >> $GITHUB_ENV
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+          echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
+          ccache -M 50G # Set ccache size
+
+      # Step 7: Build the kernel
+      - name: Start kernel compilation
+        run: |
+          cd kernel
+          
+          # Clean the source tree
+          make mrproper
+          make clean
+          
+          # Create the output directory
+          mkdir -p out
+          
+          # Create the .config file
+          make O=out ARCH=arm64 SUBARCH=arm64 vendor/xiaomi/miatoll_defconfig
+          
+          # Start the build process
+          make O=out ARCH=arm64 SUBARCH=arm64 -j$(nproc --all)
+
+      # Step 8: Prepare the flashable zip with AnyKernel3
+      - name: Package kernel with AnyKernel3
+        run: |
+          # Get compiler version string
+          COMPILER_STRING=$(cat kernel/out/.config | grep "CONFIG_CC_VERSION_TEXT" | cut -d '"' -f2)
+          
+          # Customize anykernel.sh
+          sed -i "s/kernel.string=.*/kernel.string=Lineage Kernel by Minhaz/g" anykernel/anykernel.sh
+          sed -i "s/kernel.compiler=.*/kernel.compiler=$COMPILER_STRING/g" anykernel/anykernel.sh
+          
+          # Copy compiled kernel images and modules
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+          cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
+          cp kernel/out/arch/arm64/boot/dts/vendor/qcom/sm6250-display.dtb anykernel/dtb
+          
+          # Find and copy kernel modules
+          find kernel/out -name "*.ko" -exec cp {} anykernel/modules/vendor/lib/modules/ \;
+
+          # Create the flashable zip
+          cd anykernel
+          zip -r9 ../Flashable-Kernel.zip * -x .git README.md
+
+      # Step 9: Upload the flashable zip as a build artifact
+      - name: Upload kernel zip as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Miatoll-Lineage-Kernel
+          path: Flashable-Kernel.zip
