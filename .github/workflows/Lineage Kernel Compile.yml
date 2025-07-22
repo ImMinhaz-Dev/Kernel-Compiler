@@ -1,107 +1,106 @@
+# GitHub Actions workflow to compile a custom Android kernel for Redmi Note 9 Pro (curtana)
+# Triggered manually via the GitHub Actions UI
+
 name: Lineage Kernel Compiling
 
 on:
-  workflow_dispatch:
-
-env:
-  BUILD_NAME: compiler...
-  ARCH: arm64
-  SUBARCH: arm64
-  KBUILD_BUILD_USER: MINHAZ
-  KBUILD_BUILD_HOST: POTATO
-  KERNEL_SOURCE_REPO: https://github.com/ImMinhaz-Dev/kernel_xiaomi_sm6250.git
-  KERNEL_BRANCH: lineage-22.2
-  ANYKERNEL3_REPO: https://github.com/ImMinhaz-Dev/anykernel3.git
-  ANYKERNEL3_BRANCH: master
-  CCACHE_DIR: ~/.ccache
+  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
 
 jobs:
   build_kernel:
-    name: ${{ env.BUILD_NAME }}
-    runs-on: ubuntu-23.10 # Using ubuntu-latest for simplicity, but you specified 23.10, so a custom runner or a newer official image might be needed if 23.10 isn't directly available. For now, this will default to a recent Ubuntu.
-    
+    name: Build Lineage Kernel
+    runs-on: ubuntu-22.04
+
     steps:
-    - name: Checkout Kernel Source
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ env.KERNEL_SOURCE_REPO }}
-        ref: ${{ env.KERNEL_BRANCH }}
-        path: kernel_source
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Checkout AnyKernel3
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ env.ANYKERNEL3_REPO }}
-        ref: ${{ env.ANYKERNEL3_BRANCH }}
-        path: anykernel3
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 12
 
-    - name: Install Dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y bc bison build-essential binutils ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick protobuf-compiler python-is-python3 python3-protobuf openjdk-11-jdk lib32readline-dev lib32z1-dev libdw-dev libelf-dev lz4 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential binutils ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32readline-dev lib32z1-dev libdw-dev libelf-dev liblz4-tool libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush protobuf-compiler python-is-python3 python3-protobuf rsync schedtool squashfs-tools xsltproc zip zlib1g-dev openjdk-11-jdk
+          
+      - name: Install ncurses5 for Ubuntu 22.04
+        run: |
+          sudo add-apt-repository "deb http://archive.ubuntu.com/ubuntu/jammy-updates main restricted universe multiverse"
+          sudo apt-get update
+          sudo apt-get install -y lib32ncurses5-dev libncurses5 libncurses5-dev
 
-    - name: Install ncurses5 for Ubuntu 23.10
-      run: |
-        wget https://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2_amd64.deb
-        sudo dpkg -i libtinfo5_6.3-2_amd64.deb
-        rm -f libtinfo5_6.3-2_amd64.deb
+      - name: Clone Kernel Source
+        run: git clone --depth=1 https://github.com/ImMinhaz-Dev/kernel_xiaomi_sm6250.git -b lineage-22.2 kernel
 
-        wget https://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2_amd64.deb
-        sudo dpkg -i libncurses5_6.3-2_amd64.deb
-        rm -f libncurses5_6.3-2_amd64.deb
+      - name: Clone AnyKernel3
+        run: git clone --depth=1 https://github.com/ImMinhaz-Dev/anykernel3.git -b master anykernel
 
-    - name: Configure CCACHE
-      run: |
-        echo "USE_CCACHE=1" >> $GITHUB_ENV
-        echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
-        mkdir -p ${{ env.CCACHE_DIR }}
-        echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV # Ensure CCACHE_DIR is set for subsequent steps
-        ccache -M 20G # Set ccache size to 20GB (adjust as needed)
+      - name: Clone Clang Toolchain
+        run: git clone --depth=1 https://gitlab.com/PixelOS-Devices/playgroundtc.git clang
 
-    - name: Prepare Kernel Source
-      working-directory: kernel_source
-      run: |
-        make mrproper
-        make clean
-        mkdir -p out
+      - name: Set up Environment Variables
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=MINHAZ" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=POTATO" >> $GITHUB_ENV
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+          echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
+          echo "CCACHE_DIR=${{ github.workspace }}/ccache" >> $GITHUB_ENV
+          echo "PATH=${{ github.workspace }}/clang/bin:$PATH" >> $GITHUB_ENV
 
-    - name: Generate .config
-      working-directory: kernel_source
-      run: |
-        make O=out ARCH=${{ env.ARCH }} SUBARCH=${{ env.SUBARCH }} vendor/xiaomi/miatoll_defconfig
+      - name: Configure ccache
+        run: |
+          ccache -M 50G
+          ccache -o compression=true
 
-    - name: Compile Kernel
-      working-directory: kernel_source
-      run: |
-        export KBUILD_BUILD_USER="${{ env.KBUILD_BUILD_USER }}"
-        export KBUILD_BUILD_HOST="${{ env.KBUILD_BUILD_HOST }}"
-        make O=out ARCH=${{ env.ARCH }} SUBARCH=${{ env.SUBARCH }} -j$(nproc --all)
+      - name: Prepare Kernel Source
+        working-directory: ./kernel
+        run: |
+          make mrproper
+          make clean
+          mkdir -p out
 
-    - name: Customize AnyKernel3 and Copy Files
-      working-directory: ${{ github.workspace }}
-      run: |
-        # Customize AnyKernel.sh
-        sed -i 's/kernel.compiler=.*/kernel.compiler=LineageOS-Kernel-Compiler-by-MINHAZ/g' anykernel3/anykernel.sh
+      - name: Generate Kernel .config
+        working-directory: ./kernel
+        run: |
+          make O=out vendor/xiaomi/miatoll_defconfig
 
-        # Copy kernel images to AnyKernel3
-        cp kernel_source/out/arch/${{ env.ARCH }}/boot/Image.gz anykernel3/
-        cp kernel_source/out/dtbo.img anykernel3/
-        cp kernel_source/out/dtb.img anykernel3/
+      - name: Compile Kernel
+        working-directory: ./kernel
+        run: |
+          make O=out -j$(nproc --all) \
+          CC=clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-        # Copy modules if they exist (adjust path if different)
-        # Check if modules directory exists and copy contents
-        if [ -d "kernel_source/out/lib/modules" ]; then
-          mkdir -p anykernel3/modules/system/lib/modules
-          cp -r kernel_source/out/lib/modules/* anykernel3/modules/system/lib/modules/
-        fi
+      - name: Customize anykernel.sh
+        working-directory: ./anykernel
+        run: |
+          COMPILER_NAME=$(basename $(echo ${{ github.workspace }}/clang/bin/clang))
+          sed -i "s/kernel.compiler=.*/kernel.compiler=$COMPILER_NAME/" anykernel.sh
 
-    - name: Create Flashable Zip
-      working-directory: anykernel3
-      run: |
-        zip -r9 ${{ github.workspace }}/Lineage_Kernel_Curtana_MINHAZ.zip * -x .git README.md
+      - name: Package Flashable Zip
+        working-directory: ./anykernel
+        run: |
+          cp ../kernel/out/arch/arm64/boot/Image.gz .
+          cp ../kernel/out/arch/arm64/boot/dtbo.img .
+          # The dtb.img is often appended to the kernel Image, but if it's separate, copy it.
+          if [ -f ../kernel/out/arch/arm64/boot/dtb.img ]; then
+            cp ../kernel/out/arch/arm64/boot/dtb.img .
+          fi
+          # Find and copy kernel modules if they exist
+          find ../kernel/out -name "*.ko" -exec cp {} modules/ \;
 
-    - name: Upload Flashable Zip as Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Lineage-Kernel-Curtana
-        path: Lineage_Kernel_Curtana_MINHAZ.zip
+      - name: Create Zip file
+        working-directory: ./anykernel
+        run: zip -r9 ../Lineage-Kernel-curtana.zip *
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lineage-Kernel-curtana
+          path: Lineage-Kernel-curtana.zip
