@@ -59,11 +59,14 @@ jobs:
           curl -L "$TOOLCHAIN_URL" | tar -xJ -C "$TOOLCHAIN_DIR" --strip-components=1
           echo "Toolchain extracted."
           
-          echo "Adding toolchain bin directory to PATH for this job..."
-          # This command appends the toolchain's bin directory to the GITHUB_PATH
-          # environment variable, making the cross-compiler executables available
-          # in subsequent steps within this job.
+          echo "Adding toolchain bin directory to PATH for this step and subsequent steps..."
+          # Add the toolchain's bin directory to the GitHub Actions PATH environment variable
+          # This makes it available for subsequent steps.
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
+          
+          # Explicitly update PATH for the current shell session within this run block
+          # This ensures 'aarch64-none-linux-gnu-gcc' is found for immediate verification.
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
           
           echo "Verifying toolchain installation..."
           # Verify the toolchain by checking its version
