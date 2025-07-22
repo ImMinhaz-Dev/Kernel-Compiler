@@ -99,12 +99,13 @@ jobs:
 
       # Step 7: Build the kernel
       - name: Build Kernel
+        # Set environment variables for the entire step
+        env:
+          USE_CCACHE: 1
+          CCACHE_EXEC: $(which ccache)
+          HOSTCC: gcc # Explicitly set host compiler
+          HOSTLD: ld   # Explicitly set host linker
         run: |
-          echo "Setting up ccache environment variables..."
-          # Export ccache environment variables for the build process
-          export USE_CCACHE=1
-          export CCACHE_EXEC=$(which ccache)
-          
           echo "Navigating to kernel source directory: kernel_src"
           cd kernel_src
           
@@ -112,11 +113,16 @@ jobs:
           # Generate the .config file for the kernel build
           make O=out ARCH=arm64 SUBARCH=arm64 vendor/atoll-perf_defconfig
           
+          echo "Modifying .config to remove problematic linker flag support..."
+          # Remove any lines related to CONFIG_ARM64_ERRATUM_843419 from the .config
+          # This addresses the "ld does not support --fix-cortex-a53-843419" error.
+          sed -i '/CONFIG_ARM64_ERRATUM_843419/d' out/.config
+          
           echo "Starting kernel compilation..."
           # Compile the kernel using all available CPU cores (-j$(nproc))
           # Specify output directory, architecture, sub-architecture, cross-compiler,
           # and custom build user/host names.
-          # Explicitly set DTC to use the system's installed device-tree-compiler.
+          # DTC is explicitly set to use the system's installed device-tree-compiler.
           make -j$(nproc) O=out \
                ARCH=arm64 \
                SUBARCH=arm64 \
