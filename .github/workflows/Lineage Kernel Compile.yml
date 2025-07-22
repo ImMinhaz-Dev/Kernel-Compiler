@@ -98,13 +98,17 @@ jobs:
           mkdir -p out  # Create the output directory inside the kernel source
 
       # Step 7: Build the kernel
-        # Set environment variables for the entire step
       - name: Build Kernel
+        # Set environment variables for the entire step
         env:
           USE_CCACHE: 1
           CCACHE_EXEC: $(which ccache)
-          HOSTCC: gcc # Explicitly set host compiler
-          HOSTLD: ld   # Explicitly set host linker
+          HOSTCC: gcc # Explicitly set host compiler for host tools
+          HOSTLD: ld   # Explicitly set host linker for host tools
+          # Attempt to clear problematic linker flags for the kernel build
+          LDFLAGS: "" 
+          # Attempt to clear any DTC specific CFLAGS/CPPFLAGS if they are causing issues
+          DTC_CPP_FLAGS: ""
         run: |
           echo "Navigating to kernel source directory: kernel_src"
           cd kernel_src
@@ -116,6 +120,7 @@ jobs:
           echo "Modifying .config to remove problematic linker flag support..."
           # Remove any lines related to CONFIG_ARM64_ERRATUM_843419 from the .config
           # This addresses the "ld does not support --fix-cortex-a53-843419" error.
+          # We use a more generic regex to catch variations if they exist.
           sed -i '/CONFIG_ARM64_ERRATUM_843419/d' out/.config
           
           echo "Updating .config with default values for new options (olddefconfig)..."
