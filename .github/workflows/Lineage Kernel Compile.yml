@@ -1,146 +1,167 @@
-name: Lineage Kernel compiling
-
-# The run-name provides a more descriptive name for each workflow run in GitHub Actions UI.
-run-name: Kernel Compile for Curtana by @${{ github.actor }}
+name: OSS Kernel compiling
 
 on:
-  workflow_dispatch: # Allows manual triggering of the workflow from the GitHub UI
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
-  build_kernel:
-    # Use Ubuntu 22.04 as specified by the user.
+  compiler:
+    name: compiler...
+    # Use Ubuntu 22.04 as the operating system for the runner
     runs-on: ubuntu-22.04
 
     steps:
+      # Step 1: Checkout the kernel source repository and specified branch
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          repository: ImMinhaz-Dev/kernel_xiaomi_sm6250.git
-          ref: lineage-22.2
-          path: kernel_xiaomi_sm6250 # Clones into this directory
+          repository: MiCode/Xiaomi_Kernel_OpenSource
+          ref: curtana-q-oss
+          path: kernel_src # Clone into a directory named 'kernel_src'
 
+      # Step 2: Checkout the AnyKernel3 repository and specified branch
       - name: Checkout AnyKernel3
         uses: actions/checkout@v4
         with:
-          repository: ImMinhaz-Dev/anykernel3.git
+          repository: ImMinhaz-Dev/anykernel3
           ref: master
-          path: anykernel3 # Clones into this separate directory
+          path: anykernel3 # Clone into a directory named 'anykernel3'
 
+      # Step 3: Install all required build dependencies
       - name: Install Build Dependencies
         run: |
-          sudo apt-get update
-          # Explicitly install device-tree-compiler and ensure python-is-python3 is covered
-          sudo apt-get install -y bc bison build-essential binutils ccache curl flex git git-lfs gnupg g++-multilib gcc-multilib gperf imagemagick protobuf-compiler python-is-python3 python3-protobuf openjdk-11-jdk lib32ncurses5-dev libncurses5 libncurses5-dev lib32readline-dev lib32z1-dev libdw-dev libelf-dev lz4 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev device-tree-compiler
+          echo "Updating apt package list..."
+          sudo apt-get update -y
+          echo "Installing build tools and libraries..."
+          sudo apt-get install -y \
+            bc bison build-essential binutils ccache curl flex \
+            git git-lfs gnupg g++-multilib gcc-multilib gperf \
+            imagemagick protobuf-compiler python-is-python3 python3-protobuf \
+            openjdk-11-jdk lib32ncurses5-dev libncurses5 libncurses5-dev \
+            lib32readline-dev lib32z1-dev libdw-dev libelf-dev lz4 \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop \
+            pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+          echo "All dependencies installed."
 
-      - name: Verify DTC Version
+      # Step 4: Download and set up the ARM GNU Toolchain
+      - name: Download and Setup ARM GNU Toolchain
         run: |
-          echo "Checking Device Tree Compiler (DTC) version..."
-          dtc --version
+          TOOLCHAIN_URL="https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"
+          TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain" # Directory to extract toolchain
 
-      - name: Setup ARM GNU Toolchain
-        run: |
-          TOOLCHAIN_URL=https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
-          TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain"
+          echo "Creating toolchain directory: $TOOLCHAIN_DIR"
+          mkdir -p "$TOOLCHAIN_DIR"
+          
+          echo "Downloading and extracting toolchain from $TOOLCHAIN_URL..."
+          # Use curl to download and pipe directly to tar for extraction
+          curl -L "$TOOLCHAIN_URL" | tar -xJ -C "$TOOLCHAIN_DIR" --strip-components=1
+          echo "Toolchain extracted."
+          
+          echo "Adding toolchain bin directory to PATH..."
+          # Add the toolchain's bin directory to the GitHub Actions PATH environment variable
+          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
+          
+          echo "Verifying toolchain installation..."
+          # Verify the toolchain by checking its version
+          aarch64-none-linux-gnu-gcc --version
+          echo "Toolchain verification complete."
 
-          echo "Downloading toolchain from ${TOOLCHAIN_URL}"
-          mkdir -p ${TOOLCHAIN_DIR}
-          curl -L ${TOOLCHAIN_URL} -o arm-gnu-toolchain.tar.xz
-          tar -xf arm-gnu-toolchain.tar.xz -C ${TOOLCHAIN_DIR} --strip-components=1
-
-          # Add toolchain to PATH for the current and subsequent steps
-          echo "${TOOLCHAIN_DIR}/bin" >> $GITHUB_PATH
-          export PATH="${TOOLCHAIN_DIR}/bin:$PATH"
-
-          # Verify toolchain installation
-          echo "Toolchain setup complete."
-
-      - name: Configure CCACHE
-        run: |
-          echo "Setting up ccache..."
-          export USE_CCACHE=1
-          export CCACHE_EXEC=$(which ccache)
-          ccache -M 2G # Set ccache size to 2GB
-          ccache -s # Show ccache statistics
-
+      # Step 5: Set up ccache for caching build artifacts
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          # Use the job name as the cache key
+          key: ${{ github.job }}
+          # Restore cache based on the job name
+          restore-keys: ${{ github.job }}
+          # Set the maximum ccache size to 2GB
+          max-size: 2G
+        
+      # Step 6: Prepare the kernel source for building
       - name: Prepare Kernel Source
         run: |
-          cd kernel_xiaomi_sm6250
-          echo "Cleaning kernel source..."
-          make mrproper
-          make clean
-          echo "Creating 'out' directory..."
-          mkdir out
+          echo "Navigating to kernel source directory: kernel_src"
+          cd kernel_src
+          echo "Cleaning kernel source with make mrproper..."
+          make mrproper # Clean the kernel source tree
+          echo "Cleaning kernel source with make clean..."
+          make clean    # Further clean the kernel source tree
+          echo "Creating 'out' directory for build artifacts..."
+          mkdir -p out  # Create the output directory inside the kernel source
 
-      - name: Debug DTS File Content
+      # Step 7: Build the kernel
+      - name: Build Kernel
         run: |
-          echo "Displaying first 20 lines of cust-atoll.dtsi for debugging:"
-          head -n 20 kernel_xiaomi_sm6250/arch/arm64/boot/dts/qcom/cust-atoll.dtsi
-          echo "--- End of cust-atoll.dtsi snippet ---"
+          echo "Setting up ccache environment variables..."
+          # Export ccache environment variables for the build process
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          
+          echo "Navigating to kernel source directory: kernel_src"
+          cd kernel_src
+          
+          echo "Generating .config using vendor/atoll-perf_defconfig..."
+          # Generate the .config file for the kernel build
+          make O=out ARCH=arm64 SUBARCH=arm64 vendor/atoll-perf_defconfig
+          
+          echo "Starting kernel compilation..."
+          # Compile the kernel using all available CPU cores (-j$(nproc))
+          # Specify output directory, architecture, sub-architecture, cross-compiler,
+          # and custom build user/host names
+          make -j$(nproc) O=out \
+               ARCH=arm64 \
+               SUBARCH=arm64 \
+               CC="ccache aarch64-none-linux-gnu-gcc" \
+               KBUILD_BUILD_USER="MINHAZ" \
+               KBUILD_BUILD_HOST="POTATO"
+          echo "Kernel compilation complete."
 
-      - name: Generate .config
+      # Step 8: Prepare AnyKernel3 with compiled kernel artifacts
+      - name: Prepare AnyKernel3 for Packaging
         run: |
-          cd kernel_xiaomi_sm6250
-          echo "Generating .config file..."
-          make O=out ARCH=arm64 SUBARCH=arm64 vendor/xiaomi/miatoll_defconfig
+          echo "Creating modules directory in AnyKernel3 if it doesn't exist..."
+          # Create the directory for kernel modules within AnyKernel3 structure
+          mkdir -p anykernel3/modules/system/lib/modules
+          
+          echo "Copying compiled kernel images to AnyKernel3 root..."
+          # Copy the compiled kernel image, dtbo, and dtb to the AnyKernel3 root directory
+          cp kernel_src/out/arch/arm64/boot/Image.gz anykernel3/
+          cp kernel_src/out/arch/arm64/boot/dtbo.img anykernel3/
+          cp kernel_src/out/arch/arm64/boot/dtb.img anykernel3/
+          
+          echo "Copying kernel modules (*.ko) to AnyKernel3 modules path..."
+          # Find all kernel modules (.ko files) in the kernel output directory and copy them
+          find kernel_src/out -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \;
+          
+          echo "Customizing anykernel.sh file..."
+          # Customize the kernel.string in anykernel.sh
+          sed -i 's@kernel.string=.*@kernel.string=OSS Kernel by MINHAZ@POTATO@g' anykernel3/anykernel.sh
+          # Customize the kernel.compiler string in anykernel.sh
+          sed -i 's@kernel.compiler=.*@kernel.compiler=GCC 14.3 (Arm GNU Toolchain)@g' anykernel3/anykernel.sh
+          echo "AnyKernel3 preparation complete."
 
-      - name: Compile Kernel
-        # Set KBUILD_BUILD_USER and KBUILD_BUILD_HOST as environment variables for this step only.
-        env:
-          KBUILD_BUILD_USER: MINHAZ
-          KBUILD_BUILD_HOST: POTATO
+      # Step 9: Create the flashable ZIP file using AnyKernel3
+      - name: Create Flashable Zip
+        id: create_zip # Assign an ID to this step to access its outputs
         run: |
-          cd kernel_xiaomi_sm6250
-          # Get the number of CPU cores for parallel compilation
-          NPROC=$(nproc)
-          echo "Compiling kernel with ${NPROC} jobs..."
-          # CROSS_COMPILE points to the prefix of the toolchain binaries
-          make -j${NPROC} O=out ARCH=arm64 SUBARCH=arm64 \
-            CROSS_COMPILE=aarch64-none-linux-gnu-
+          echo "Navigating to AnyKernel3 directory..."
+          cd anykernel3
+          # Define the name of the flashable ZIP file with a timestamp
+          ZIP_NAME="OSS-Kernel-MINHAZ-POTATO-$(date +%Y%m%d-%H%M).zip"
+          echo "Creating flashable zip: $ZIP_NAME"
+          # Create the ZIP file, excluding .git directory and README.md
+          zip -r9 "$ZIP_NAME" * -x ".git" "README.md"
+          echo "Flashable zip created."
+          # Output the name of the created ZIP file, which can be used by subsequent steps
+          echo "zip_file=$ZIP_NAME" >> $GITHUB_OUTPUT
 
-      - name: Prepare AnyKernel3 and Create Flashable Zip
-        run: |
-          # Define paths for convenience
-          KERNEL_SOURCE_DIR="kernel_xiaomi_sm6250"
-          ANYKERNEL_DIR="anykernel3"
-          KERNEL_OUT_DIR="${KERNEL_SOURCE_DIR}/out"
-
-          echo "Preparing AnyKernel3 for packaging..."
-
-          # Navigate to AnyKernel3 directory
-          cd ${ANYKERNEL_DIR}
-
-          # Customize anykernel.sh with compiler name
-          echo "Customizing anykernel.sh..."
-          # The compiler name for the ARM GNU Toolchain 14.3.rel1
-          sed -i 's|kernel.compiler=.*|kernel.compiler=GNU GCC 14.3.rel1|g' anykernel.sh
-
-          # Copy kernel image, dtbo, and dtb to AnyKernel3 root
-          echo "Copying kernel images and device tree blobs..."
-          cp ${KERNEL_OUT_DIR}/arch/arm64/boot/Image.gz .
-          cp ${KERNEL_OUT_DIR}/arch/arm64/boot/dtbo.img .
-          cp ${KERNEL_OUT_DIR}/arch/arm64/boot/dtb.img .
-
-          # Copy kernel modules if they exist
-          MODULES_INSTALL_DIR="${KERNEL_OUT_DIR}/modules_install/lib/modules"
-          if [ -d "${MODULES_INSTALL_DIR}" ]; then
-            echo "Copying kernel modules..."
-            # Find the exact kernel version directory (e.g., 5.4.198-lineage-g8c10e12)
-            KERNEL_VERSION=$(ls ${MODULES_INSTALL_DIR})
-            mkdir -p modules/system/lib/modules/
-            cp -r ${MODULES_INSTALL_DIR}/${KERNEL_VERSION} modules/system/lib/modules/
-          else
-            echo "No kernel modules found to copy."
-          fi
-
-          # Create the flashable zip
-          ZIP_NAME="LineageOS-Kernel-Curtana-${{ github.run_number }}.zip"
-          echo "Creating flashable zip: ${ZIP_NAME}..."
-          zip -r9 "${ZIP_NAME}" * -x .git # Exclude .git directory
-          mv "${ZIP_NAME}" ../ # Move the zip to the parent directory for easier artifact upload
-
-      - name: Upload Flashable Zip
+      # Step 10: Upload the generated flashable ZIP as a workflow artifact
+      - name: Upload Flashable Zip as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LineageOS-Kernel-Curtana
-          path: LineageOS-Kernel-Curtana-${{ github.run_number }}.zip
-          retention-days: 7 # Keep the artifact for 7 days
+          # Use the ZIP file name from the previous step's output as the artifact name
+          name: ${{ steps.create_zip.outputs.zip_file }}
+          # Specify the path to the created ZIP file
+          path: anykernel3/${{ steps.create_zip.outputs.zip_file }}
+          retention-days: 7 # Retain the artifact for 7 days
+          
