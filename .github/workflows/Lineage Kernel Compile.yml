@@ -56,11 +56,9 @@ jobs:
           echo "KBUILD_BUILD_HOST=POTATO" >> $GITHUB_ENV
           echo "USE_CCACHE=1" >> $GITHUB_ENV
           echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
-          # Using the system's default aarch64-linux-gnu- GCC
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
           
           # Configure ccache for better performance
-          ccache -M 50G
+          ccache -M 5G
           ccache -o compression=true
 
       - name: Clone kernel source
