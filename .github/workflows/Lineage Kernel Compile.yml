@@ -46,19 +46,23 @@ jobs:
       # Step 4: Download and set up the ARM GNU Toolchain
       - name: Download and Setup ARM GNU Toolchain
         run: |
+          # The exact toolchain URL provided by the user
           TOOLCHAIN_URL="https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"
-          TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain" # Directory to extract toolchain
+          TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain" # Standard directory for toolchain
 
           echo "Creating toolchain directory: $TOOLCHAIN_DIR"
           mkdir -p "$TOOLCHAIN_DIR"
           
           echo "Downloading and extracting toolchain from $TOOLCHAIN_URL..."
           # Use curl to download and pipe directly to tar for extraction
+          # The -L flag handles redirects, and -xJ extracts .xz compressed files
           curl -L "$TOOLCHAIN_URL" | tar -xJ -C "$TOOLCHAIN_DIR" --strip-components=1
           echo "Toolchain extracted."
           
-          echo "Adding toolchain bin directory to PATH..."
-          # Add the toolchain's bin directory to the GitHub Actions PATH environment variable
+          echo "Adding toolchain bin directory to PATH for this job..."
+          # This command appends the toolchain's bin directory to the GITHUB_PATH
+          # environment variable, making the cross-compiler executables available
+          # in subsequent steps within this job.
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
           
           echo "Verifying toolchain installation..."
@@ -134,9 +138,9 @@ jobs:
           find kernel_src/out -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \;
           
           echo "Customizing anykernel.sh file..."
-          # Customize the kernel.string in anykernel.sh
+          # Customize the kernel.string in anykernel.sh using '@' as delimiter
           sed -i 's@kernel.string=.*@kernel.string=OSS Kernel by MINHAZ@POTATO@g' anykernel3/anykernel.sh
-          # Customize the kernel.compiler string in anykernel.sh
+          # Customize the kernel.compiler string in anykernel.sh using '@' as delimiter
           sed -i 's@kernel.compiler=.*@kernel.compiler=GCC 14.3 (Arm GNU Toolchain)@g' anykernel3/anykernel.sh
           echo "AnyKernel3 preparation complete."
 
@@ -164,4 +168,3 @@ jobs:
           # Specify the path to the created ZIP file
           path: anykernel3/${{ steps.create_zip.outputs.zip_file }}
           retention-days: 7 # Retain the artifact for 7 days
-          
