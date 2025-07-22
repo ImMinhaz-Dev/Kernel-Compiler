@@ -33,7 +33,6 @@ jobs:
 
       - name: Setup ARM GNU Toolchain
         run: |
-          # Removed quotes around the URL
           TOOLCHAIN_URL=https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
           TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain"
 
@@ -42,8 +41,9 @@ jobs:
           curl -L ${TOOLCHAIN_URL} -o arm-gnu-toolchain.tar.xz
           tar -xf arm-gnu-toolchain.tar.xz -C ${TOOLCHAIN_DIR} --strip-components=1
 
-          # Add toolchain to PATH
+          # Add toolchain to PATH for the current and subsequent steps
           echo "${TOOLCHAIN_DIR}/bin" >> $GITHUB_PATH
+          export PATH="${TOOLCHAIN_DIR}/bin:$PATH"
 
           # Verify toolchain installation
           echo "Verifying toolchain..."
