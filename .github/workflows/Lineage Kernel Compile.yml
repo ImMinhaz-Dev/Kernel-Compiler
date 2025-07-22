@@ -92,6 +92,13 @@ jobs:
           echo "Creating 'out' directory for build artifacts..."
           mkdir -p out  # Create the output directory inside the kernel source
 
+          echo "Temporarily renaming scripts/dtc to force system DTC usage..."
+          # This is a more aggressive fix for the 'yylloc' error.
+          # It prevents the kernel build system from finding its internal dtc source,
+          # forcing it to use the system-installed 'device-tree-compiler'.
+          mv scripts/dtc scripts/dtc_bak
+          echo "scripts/dtc renamed to scripts/dtc_bak."
+
       # Step 7: Build the kernel
       - name: Build Kernel
         # Set environment variables for the entire step
@@ -101,7 +108,9 @@ jobs:
           HOSTCC: gcc # Explicitly set host compiler for host tools
           HOSTLD: ld   # Explicitly set host linker for host tools
           # Attempt to clear problematic linker flags for the kernel build
-          LDFLAGS: "" 
+          # This is a more direct way to try and remove the erratum flag.
+          KBUILD_LDFLAGS: "" # Clear KBUILD_LDFLAGS
+          LDFLAGS: ""        # Clear general LDFLAGS
           # Attempt to clear any DTC specific CFLAGS/CPPFLAGS if they are causing issues
           DTC_CPP_FLAGS: ""
         run: |
@@ -141,25 +150,34 @@ jobs:
       # Step 8: Prepare AnyKernel3 with compiled kernel artifacts
       - name: Prepare AnyKernel3 for Packaging
         run: |
+          echo "Navigating back to kernel source directory for cleanup..."
+          cd kernel_src
+          # Rename scripts/dtc_bak back to scripts/dtc if needed for other operations
+          # (though not strictly necessary for this workflow's current scope)
+          # mv scripts/dtc_bak scripts/dtc
+          
           echo "Creating modules directory in AnyKernel3 if it doesn't exist..."
           # Create the directory for kernel modules within AnyKernel3 structure
-          mkdir -p anykernel3/modules/system/lib/modules
+          mkdir -p ../anykernel3/modules/system/lib/modules
           
           echo "Copying compiled kernel images to AnyKernel3 root..."
           # Copy the compiled kernel image, dtbo, and dtb to the AnyKernel3 root directory
-          cp kernel_src/out/arch/arm64/boot/Image.gz anykernel3/
-          cp kernel_src/out/arch/arm64/boot/dtbo.img anykernel3/
-          cp kernel_src/out/arch/arm64/boot/dtb.img anykernel3/
+          cp out/arch/arm64/boot/Image.gz ../anykernel3/
+          cp out/arch/arm64/boot/dtbo.img ../anykernel3/
+          cp out/arch/arm64/boot/dtb.img ../anykernel3/
           
           echo "Copying kernel modules (*.ko) to AnyKernel3 modules path..."
           # Find all kernel modules (.ko files) in the kernel output directory and copy them
-          find kernel_src/out -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \;
+          find out -name "*.ko" -exec cp {} ../anykernel3/modules/system/lib/modules/ \;
+          
+          echo "Navigating to AnyKernel3 directory for customization..."
+          cd ../anykernel3
           
           echo "Customizing anykernel.sh file..."
           # Customize the kernel.string in anykernel.sh using '@' as delimiter
-          sed -i 's@kernel.string=.*@kernel.string=OSS Kernel by MINHAZ@POTATO@g' anykernel3/anykernel.sh
+          sed -i 's@kernel.string=.*@kernel.string=OSS Kernel by MINHAZ@POTATO@g' anykernel.sh
           # Customize the kernel.compiler string in anykernel.sh using '@' as delimiter
-          sed -i 's@kernel.compiler=.*@kernel.compiler=GCC 14.3 (Arm GNU Toolchain)@g' anykernel3/anykernel.sh
+          sed -i 's@kernel.compiler=.*@kernel.compiler=GCC 14.3 (Arm GNU Toolchain)@g' anykernel.sh
           echo "AnyKernel3 preparation complete."
 
       # Step 9: Create the flashable ZIP file using AnyKernel3
