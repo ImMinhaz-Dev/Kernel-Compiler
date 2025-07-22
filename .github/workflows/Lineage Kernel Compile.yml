@@ -1,121 +1,119 @@
-#
-# Copyright (C) 2024 The Potato Project
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
+name: Lineage Kernel compiling
 
-name: Lineage Kernel Compiling
-
-# This workflow can be triggered manually from the Actions tab on GitHub.
 on:
-  workflow_dispatch:
-    inputs:
-      build_name:
-        description: 'Name for the build run'
-        required: true
-        default: 'compiler...'
+  workflow_dispatch: # Allows manual triggering of the workflow from the GitHub UI
 
 jobs:
-  build_kernel:
-    name: Build Kernel for curtana
-    runs-on: ubuntu-22.04
+  build:
+    name: compiler... # Build name as requested
+    runs-on: ubuntu-22.04 # Operating system as requested
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
+      with:
+        repository: ImMinhaz-Dev/kernel_xiaomi_sm6250.git
+        ref: lineage-22.2 # Kernel branch
+        path: kernel_source # Directory to clone the kernel source into
 
-      - name: Set up build environment
-        run: |
-          # This step installs all the necessary packages for the build process.
-          sudo apt-get update
-          sudo apt-get install -y \
-            bc bison build-essential binutils ccache curl flex g++-multilib \
-            gcc-multilib git git-lfs gnupg gperf imagemagick \
-            lib32ncurses5-dev libncurses5 libncurses5-dev lib32readline-dev \
-            lib32z1-dev libdw-dev libelf-dev lz4 libsdl1.2-dev libssl-dev \
-            libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools \
-            xsltproc zip zlib1g-dev openjdk-11-jdk protobuf-compiler \
-            python-is-python3 python3-protobuf
+    - name: Clean Kernel Source
+      run: |
+        cd kernel_source
+        make mrproper
+        make clean
 
-      - name: Set up environment variables and ccache
-        run: |
-          # Set up environment variables that will be used across different steps.
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=MINHAZ" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=POTATO" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
-          
-          # Configure ccache for better performance
-          ccache -M 5G
-          ccache -o compression=true
+    - name: Create Output Directory
+      run: |
+        cd kernel_source
+        mkdir out
 
-      - name: Clone kernel source
-        run: |
-          # Clones the specified kernel source repository and branch.
-          git clone --depth=1 https://github.com/ImMinhaz-Dev/kernel_xiaomi_sm6250.git -b lineage-22.2 kernel
-          cd kernel
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        # Install all required packages for kernel compilation, including cross-compilers
+        sudo apt install -y bc bison build-essential binutils ccache curl flex git git-lfs gnupg gperf imagemagick protobuf-compiler python-is-python3 python3-protobuf openjdk-11-jdk lib32ncurses5-dev libncurses5 libncurses5-dev lib32readline-dev lib32z1-dev libdw-dev libelf-dev lz4 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
+        gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
-      - name: Clean kernel source
-        run: |
-          # Navigates into the kernel source directory and cleans it.
-          # This ensures a fresh build environment.
-          cd kernel
-          make mrproper
-          make clean
+    - name: Setup CCACHE
+      run: |
+        # Set ccache size to 50GB
+        ccache -M 50G
 
-      - name: Generate kernel config
-        run: |
-          # Generates the .config file for the miatoll device.
-          # The 'O=out' parameter specifies the output directory for build artifacts.
-          cd kernel
-          make O=out vendor/xiaomi/miatoll_defconfig
+    - name: Restore CCACHE Cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/.ccache
+        key: ${{ runner.os }}-ccache-${{ github.sha }} # Cache key based on OS and commit SHA
+        restore-keys: |
+          ${{ runner.os }}-ccache- # Fallback key
 
-      - name: Compile the kernel
-        run: |
-          # This is the main compilation step.
-          # It uses the number of available CPU cores to speed up the build.
-          cd kernel
-          make O=out -j$(nproc --all)
+    - name: Configure Kernel
+      run: |
+        cd kernel_source
+        # Create the .config file using the provided defconfig
+        make O=out ARCH=arm64 SUBARCH=arm64 vendor/xiaomi/miatoll_defconfig
 
-      - name: Clone AnyKernel3
-        run: |
-          # Clones the AnyKernel3 repository which is used to create a flashable zip.
-          git clone --depth=1 https://github.com/ImMinhaz-Dev/anykernel3.git -b master anykernel
+    - name: Compile Kernel
+      id: compile_kernel # Assign an ID to this step to access its outputs
+      run: |
+        cd kernel_source
+        # Get the clang version to use as the compiler name for AnyKernel3
+        COMPILER_VERSION=$(clang --version | head -n 1 | awk '{print $NF}')
+        echo "Detected compiler version: $COMPILER_VERSION"
+        # Output the compiler name for use in subsequent steps
+        echo "compiler_name=$COMPILER_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Package the kernel into a flashable zip
-        run: |
-          # This step prepares the final flashable zip file.
-          cd anykernel
+        # Compile the kernel using system default clang
+        # -j$(nproc --all) uses all available CPU cores for faster compilation
+        # O=out specifies the output directory
+        # ARCH and SUBARCH are set as requested
+        # CC=clang and LD=ld.lld specify the compiler and linker
+        # CROSS_COMPILE and CROSS_COMPILE_ARM32 are set for cross-compilation
+        # USE_CCACHE=1 enables ccache
+        # KBUILD_BUILD_USER and KBUILD_BUILD_HOST are set as requested
+        make -j$(nproc --all) O=out \
+          ARCH=arm64 SUBARCH=arm64 \
+          CC=clang LD=ld.lld \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          USE_CCACHE=1 \
+          KBUILD_BUILD_USER="MINHAZ" KBUILD_BUILD_HOST="POTATO"
 
-          # Customize the anykernel.sh script with the compiler info
-          sed -i 's/kernel.compiler=.*/kernel.compiler="GCC (aarch64-linux-gnu) Compiler"/' anykernel.sh
+    - name: Checkout AnyKernel3 Repository
+      uses: actions/checkout@v4
+      with:
+        repository: ImMinhaz-Dev/anykernel3.git
+        ref: master # AnyKernel3 branch
+        path: anykernel3 # Directory to clone AnyKernel3 into
 
-          # Copy the compiled kernel images to the AnyKernel3 directory
-          cp ../kernel/out/arch/arm64/boot/Image.gz .
-          cp ../kernel/out/arch/arm64/boot/dtb.img .
-          cp ../kernel/out/arch/arm64/boot/dts/vendor/qcom/sm6250-common.dtbo dtbo.img
+    - name: Customize AnyKernel3
+      run: |
+        cd anykernel3
+        # Retrieve the compiler name from the previous step's output
+        COMPILER_NAME="${{ steps.compile_kernel.outputs.compiler_name }}"
+        # Edit the anykernel.sh file to include the compiler name
+        sed -i "s/kernel.compiler=.*/kernel.compiler=$COMPILER_NAME/g" anykernel.sh
 
-          # Find and copy any compiled kernel modules (*.ko files)
-          find ../kernel/out -type f -name "*.ko" -exec cp {} modules/system/lib/modules/ \;
-          
-          # Create the final zip file
-          zip -r9 LineageKernel-curtana-${{ github.run_id }}.zip * -x .git README.md
+    - name: Copy Kernel Artifacts to AnyKernel3
+      run: |
+        # Copy compiled kernel image and device tree blobs to AnyKernel3 root
+        cp kernel_source/out/arch/arm64/boot/Image.gz anykernel3/
+        cp kernel_source/out/arch/arm64/boot/dtbo.img anykernel3/
+        # Assuming sm6250-idp.dtb is the correct DTB for your device
+        cp kernel_source/out/arch/arm64/boot/dts/qcom/sm6250-idp.dtb anykernel3/dtb.img
 
-      - name: Upload flashable zip as an artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: LineageKernel-curtana
-          path: anykernel/LineageKernel-curtana-${{ github.run_id }}.zip
+        # Find and copy all compiled kernel modules (*.ko) to the AnyKernel3 modules path
+        # This path is common for AnyKernel3 module installations
+        find kernel_source/out -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \;
 
+    - name: Create Flashable Zip
+      run: |
+        cd anykernel3
+        # Create the flashable zip file from the AnyKernel3 directory contents
+        zip -r9 RedmiNote9Pro-Curtana-LineageKernel-${{ github.run_id }}.zip *
+
+    - name: Upload Flashable Zip as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: RedmiNote9Pro-Curtana-LineageKernel-${{ github.run_id }} # Name of the artifact
+        path: anykernel3/RedmiNote9Pro-Curtana-LineageKernel-${{ github.run_id }}.zip # Path to the zip file
