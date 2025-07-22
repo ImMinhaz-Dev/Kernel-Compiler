@@ -98,8 +98,8 @@ jobs:
           mkdir -p out  # Create the output directory inside the kernel source
 
       # Step 7: Build the kernel
-      - name: Build Kernel
         # Set environment variables for the entire step
+      - name: Build Kernel
         env:
           USE_CCACHE: 1
           CCACHE_EXEC: $(which ccache)
@@ -109,14 +109,20 @@ jobs:
           echo "Navigating to kernel source directory: kernel_src"
           cd kernel_src
           
-          echo "Generating .config using vendor/atoll-perf_defconfig..."
-          # Generate the .config file for the kernel build
+          echo "Generating initial .config using vendor/atoll-perf_defconfig..."
+          # Generate the initial .config file for the kernel build
           make O=out ARCH=arm64 SUBARCH=arm64 vendor/atoll-perf_defconfig
           
           echo "Modifying .config to remove problematic linker flag support..."
           # Remove any lines related to CONFIG_ARM64_ERRATUM_843419 from the .config
           # This addresses the "ld does not support --fix-cortex-a53-843419" error.
           sed -i '/CONFIG_ARM64_ERRATUM_843419/d' out/.config
+          
+          echo "Updating .config with default values for new options (olddefconfig)..."
+          # Run make olddefconfig to apply default values for any new or unset options
+          # This prevents interactive prompts in the CI environment and ensures consistency
+          # after the sed modification.
+          make O=out ARCH=arm64 SUBARCH=arm64 olddefconfig
           
           echo "Starting kernel compilation..."
           # Compile the kernel using all available CPU cores (-j$(nproc))
