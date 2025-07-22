@@ -43,7 +43,7 @@ jobs:
             pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
           echo "All dependencies installed."
 
-      # Step 4: Download and set up the ARM GNU Toolchain
+      # Step 4: Download and Set up the ARM GNU Toolchain
       - name: Download and Setup ARM GNU Toolchain
         run: |
           # The exact toolchain URL provided by the user
@@ -114,11 +114,15 @@ jobs:
           echo "Starting kernel compilation..."
           # Compile the kernel using all available CPU cores (-j$(nproc))
           # Specify output directory, architecture, sub-architecture, cross-compiler,
-          # and custom build user/host names
+          # and custom build user/host names.
+          # Explicitly set HOSTCC and HOSTLD to use the system's native compiler/linker
+          # for host tools like DTC, which often resolves 'multiple definition' errors.
           make -j$(nproc) O=out \
                ARCH=arm64 \
                SUBARCH=arm64 \
                CC="ccache aarch64-none-linux-gnu-gcc" \
+               HOSTCC=gcc \
+               HOSTLD=ld \
                KBUILD_BUILD_USER="MINHAZ" \
                KBUILD_BUILD_HOST="POTATO"
           echo "Kernel compilation complete."
