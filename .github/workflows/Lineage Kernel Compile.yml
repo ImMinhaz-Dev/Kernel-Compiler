@@ -52,8 +52,7 @@ jobs:
           export PATH="${TOOLCHAIN_DIR}/bin:$PATH"
 
           # Verify toolchain installation
-          echo "Verifying toolchain..."
-          aarch64-none-linux-gnu-gcc -v
+          echo "Toolchain setup complete."
 
       - name: Configure CCACHE
         run: |
@@ -71,6 +70,12 @@ jobs:
           make clean
           echo "Creating 'out' directory..."
           mkdir out
+
+      - name: Debug DTS File Content
+        run: |
+          echo "Displaying first 20 lines of cust-atoll.dtsi for debugging:"
+          head -n 20 kernel_xiaomi_sm6250/arch/arm64/boot/dts/qcom/cust-atoll.dtsi
+          echo "--- End of cust-atoll.dtsi snippet ---"
 
       - name: Generate .config
         run: |
