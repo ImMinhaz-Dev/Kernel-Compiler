@@ -34,9 +34,6 @@ jobs:
             build-essential git zip python3 ccache flex bison bc cpio kmod \
             libncurses6 libelf-dev openssl device-tree-compiler unzip xz-utils
 
-          # Symlink python to python3 for older scripts if necessary
-          sudo ln -s /usr/bin/python3 /usr/bin/python || true
-
       - name: Download and Extract Zyc Clang
         env:
           ZYC_CLANG_RELEASE_TAG: 22.0.0git-20250726-release # Latest tag from ZyCromerZ/Clang releases
@@ -48,26 +45,11 @@ jobs:
 
           echo "Extracting Zyc Clang..."
           tar -xf "$HOME/toolchains/${{ env.ZYC_CLANG_FILENAME }}" -C "$HOME/toolchains"
-
-          # --- FIX START ---
-          # Find the actual name of the extracted directory
-          # We'll assume it's the only new directory created in $HOME/toolchains
-          EXTRACTED_DIR=$(find "$HOME/toolchains" -maxdepth 1 -type d -name "Clang-*" ! -name "zyc-clang" -printf "%f\n" | head -n 1)
-
-          if [ -z "$EXTRACTED_DIR" ]; then
-            echo "Error: Could not find the extracted Zyc Clang directory!"
-            ls -l "$HOME/toolchains" # List contents for debugging
-            exit 1
-          fi
-
-          echo "Detected extracted directory: $EXTRACTED_DIR"
-          mv "$HOME/toolchains/$EXTRACTED_DIR" "$HOME/toolchains/zyc-clang"
-          # --- FIX END ---
           
           # Verify Zyc Clang structure
-          ls -l "$HOME/toolchains/zyc-clang/bin/clang" || { echo "Zyc Clang clang binary not found!"; exit 1; }
-          ls -l "$HOME/toolchains/zyc-clang/aarch64-linux-gnu/bin/ar" || { echo "Zyc Clang aarch64-linux-gnu ar binary not found!"; exit 1; }
-          ls -l "$HOME/toolchains/zyc-clang/arm-linux-gnueabi/bin/ar" || { echo "Zyc Clang arm-linux-gnueabi ar binary not found!"; exit 1; }
+          ls -l "$HOME/toolchains/bin/clang" || { echo "Zyc Clang clang binary not found!"; exit 1; }
+          ls -l "$HOME/toolchains/aarch64-linux-gnu/bin/ar" || { echo "Zyc Clang aarch64-linux-gnu ar binary not found!"; exit 1; }
+          ls -l "$HOME/toolchains/arm-linux-gnueabi/bin/ar" || { echo "Zyc Clang arm-linux-gnueabi ar binary not found!"; exit 1; }
 
       - name: Setup Environment Variables for Kernel Compilation
         shell: bash # Explicitly use bash for consistent behavior
@@ -78,32 +60,32 @@ jobs:
           echo "KBUILD_BUILD_HOST=MANJARO-i3" >> $GITHUB_ENV
 
           # Path to Zyc Clang installation's root directory
-          echo "ZYC_CLANG_ROOT=$HOME/toolchains/zyc-clang" >> $GITHUB_ENV
+          echo "ZYC_CLANG_ROOT=$HOME/toolchains" >> $GITHUB_ENV
           
           # The path to the main Clang binaries
-          echo "ZYC_CLANG_BIN=$HOME/toolchains/zyc-clang/bin" >> $GITHUB_ENV
+          echo "ZYC_CLANG_BIN=$HOME/toolchains/bin" >> $GITHUB_ENV
 
           # Set PATH to include Zyc Clang's main bin directory
-          echo "PATH=$HOME/toolchains/zyc-clang/bin:$PATH" >> $GITHUB_ENV # Prepend Zyc Clang to PATH
+          echo "PATH=$HOME/toolchains/bin:$PATH" >> $GITHUB_ENV # Prepend Zyc Clang to PATH
 
           # Explicitly tell the kernel's build system to use Zyc Clang's binaries.
-          echo "CC=$HOME/toolchains/zyc-clang/bin/clang" >> $GITHUB_ENV
-          echo "LD=$HOME/toolchains/zyc-clang/bin/ld.lld" >> $GITHUB_ENV
-          echo "AR=$HOME/toolchains/zyc-clang/bin/llvm-ar" >> $GITHUB_ENV
-          echo "NM=$HOME/toolchains/zyc-clang/bin/llvm-nm" >> $GITHUB_ENV
-          echo "OBJCOPY=$HOME/toolchains/zyc-clang/bin/llvm-objcopy" >> $GITHUB_ENV
-          echo "OBJDUMP=$HOME/toolchains/zyc-clang/bin/llvm-objdump" >> $GITHUB_ENV
-          echo "STRIP=$HOME/toolchains/zyc-clang/bin/llvm-strip" >> $GITHUB_ENV
+          echo "CC=$HOME/toolchains/bin/clang" >> $GITHUB_ENV
+          echo "LD=$HOME/toolchains/bin/ld.lld" >> $GITHUB_ENV
+          echo "AR=$HOME/toolchains/bin/llvm-ar" >> $GITHUB_ENV
+          echo "NM=$HOME/toolchains/bin/llvm-nm" >> $GITHUB_ENV
+          echo "OBJCOPY=$HOME/toolchains/bin/llvm-objcopy" >> $GITHUB_ENV
+          echo "OBJDUMP=$HOME/toolchains/bin/llvm-objdump" >> $GITHUB_ENV
+          echo "STRIP=$HOME/toolchains/bin/llvm-strip" >> $GITHUB_ENV
 
           # Target triple for Clang.
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
           # CROSS_COMPILE for AArch64 (points to binutils directory within Zyc Clang)
-          echo "CROSS_COMPILE=$HOME/toolchains/zyc-clang/aarch64-linux-gnu/bin/" >> $GITHUB_ENV
-          echo "CROSS_COMPILE_ARM32=$HOME/toolchains/zyc-clang/arm-linux-gnueabi/bin/" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=$HOME/toolchains/aarch64-linux-gnu/bin/" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=$HOME/toolchains/arm-linux-gnueabi/bin/" >> $GITHUB_ENV
 
           # CLANG_GCC_TOOLCHAIN tells Clang where its supporting GNU-like toolchain/sysroot is.
-          echo "CLANG_GCC_TOOLCHAIN=$HOME/toolchains/zyc-clang/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "CLANG_GCC_TOOLCHAIN=$HOME/toolchains/aarch64-linux-gnu" >> $GITHUB_ENV
 
 
       - name: Configure and Compile Kernel
@@ -113,7 +95,7 @@ jobs:
           make O=out mrproper
 
           # Configure the kernel
-          make O=out sm6250_defconfig \
+          make O=out vendor/atoll-perf_defconfig \
             LLVM=1 LLVM_IAS=1 \
             DTC_EXT="$(command -v dtc)" \
             CC="${CC} --gcc-toolchain=${CLANG_GCC_TOOLCHAIN}"
@@ -133,10 +115,11 @@ jobs:
           # Copy compiled kernel image
           # Common image names: Image, Image.gz, Image.gz-dtb
           # Using Image.gz-dtb as it's common for Qualcomm devices. Verify this path if compilation fails.
-          cp "${KERNEL_DIR}/Image.gz-dtb" ./
+          cp "${KERNEL_DIR}/Image.gz" ./
           
           # If your device needs a separate dtbo.img, uncomment and copy it here:
-          # cp "${KERNEL_DIR}/dtbo.img" ./ 
+          cp "${KERNEL_DIR}/dtbo.img" ./ 
+          cp "${KERNEL_DIR}/dtb.img" ./ 
 
           # Optional: Adjust AnyKernel3 properties (e.g., kernel string, device names)
           # These lines can be uncommented and modified to customize the flashable zip's behavior/info
