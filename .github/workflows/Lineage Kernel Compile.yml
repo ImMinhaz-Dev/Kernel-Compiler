@@ -1,95 +1,142 @@
-name: OSS Kernel compiling
+# .github/workflows/kernel_build.yml
+
+name: sm6250 LineageOS Kernel Build
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual triggering from the GitHub Actions tab
+  push:
+    branches:
+      - lineage-22.2 # Trigger on push to your kernel's main development branch
 
 jobs:
-  build:
-    name: ${{ github.event.repository.name }} - ${{ github.ref_name }} - compiler...
-    runs-on: ubuntu-22.04
+  build_kernel:
+    runs-on: ubuntu-latest # GitHub-hosted runner, Ubuntu is recommended for Android builds
 
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          repository: MiCode/Xiaomi_Kernel_OpenSource.git
-          ref: curtana-q-oss
-          path: kernel_source
+          repository: 'ImMinhaz-Dev/android_kernel_xiaomi_sm6250' # Your kernel repository
+          ref: 'lineage-22.2' # Your kernel branch
+          path: 'kernel_source' # Checkout to a specific directory
 
-      - name: Checkout Anykernel3
+      - name: Checkout AnyKernel3
         uses: actions/checkout@v4
         with:
-          repository: ImMinhaz-Dev/anykernel3.git
-          ref: master
-          path: anykernel3
+          repository: 'ImMinhaz-Dev/anykernel3' # Your AnyKernel3 repository
+          ref: 'master' # Your AnyKernel3 branch
+          path: 'AnyKernel3'
 
-      - name: Install Dependencies
+      - name: Prepare Build Environment (Ubuntu Packages)
         run: |
-          sudo apt update
-          sudo apt install -y build-essential git flex bison bc libssl-dev libncurses-dev libelf-dev libudev-dev \
-            fakeroot xz-utils gawk python3 dwarves ccache libiberty-dev pkg-config autoconf uuid-dev libjson-c-dev libzstd-dev squashfs-tools
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git python3 ccache flex bison bc cpio kmod \
+            ncurses libelf-dev openssl device-tree-compiler android-tools unzip xz-utils
 
-      - name: Download and Setup Toolchain
+          # Symlink python to python3 for older scripts if necessary
+          sudo ln -s /usr/bin/python3 /usr/bin/python || true
+
+      - name: Download and Extract Zyc Clang
+        env:
+          ZYC_CLANG_RELEASE_TAG: 22.0.0git-20250726-release # Latest tag from ZyCromerZ/Clang releases
+          ZYC_CLANG_FILENAME: Clang-22.0.0git-20250726.tar.gz # Exact filename for the chosen release
         run: |
-          TOOLCHAIN_DIR="/opt/toolchains/arm-gnu-toolchain"
-          mkdir -p "$TOOLCHAIN_DIR"
-          curl -L "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz" | sudo tar -xJ --strip-components=1 -C "$TOOLCHAIN_DIR"
-          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
-          export PATH="$TOOLCHAIN_DIR/bin:$PATH" # Set PATH for current step as well
+          mkdir -p "$HOME/toolchains"
+          echo "Downloading Zyc Clang from GitHub Releases..."
+          curl -L -o "$HOME/toolchains/${{ env.ZYC_CLANG_FILENAME }}" "https://github.com/ZyCromerZ/Clang/releases/download/${{ env.ZYC_CLANG_RELEASE_TAG }}/${{ env.ZYC_CLANG_FILENAME }}"
 
-      - name: Verify Toolchain
+          echo "Extracting Zyc Clang..."
+          tar -xf "$HOME/toolchains/${{ env.ZYC_CLANG_FILENAME }}" -C "$HOME/toolchains"
+          mv "$HOME/toolchains/Clang-22.0.0git-20250726" "$HOME/toolchains/zyc-clang" # Adjusted extracted folder name
+          
+          # Verify Zyc Clang structure (optional, but good for debugging)
+          ls -l "$HOME/toolchains/zyc-clang/bin/clang" || { echo "Zyc Clang clang binary not found!"; exit 1; }
+          ls -l "$HOME/toolchains/zyc-clang/aarch64-linux-gnu/bin/ar" || { echo "Zyc Clang aarch64-linux-gnu ar binary not found!"; exit 1; }
+          ls -l "$HOME/toolchains/zyc-clang/arm-linux-gnueabi/bin/ar" || { echo "Zyc Clang arm-linux-gnueabi ar binary not found!"; exit 1; }
+
+
+      - name: Setup Environment Variables for Kernel Compilation
+        shell: bash # Explicitly use bash for consistent behavior
         run: |
-          export PATH="/opt/toolchains/arm-gnu-toolchain/bin:$PATH"
-          aarch64-none-linux-gnu-gcc --version
-          aarch64-none-linux-gnu-ld --version
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=GitHubActions" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=github-runner" >> $GITHUB_ENV
 
-      - name: Configure CCACHE
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ github.sha }}
-          max-size: 2G
+          # Path to Zyc Clang installation's root directory
+          echo "ZYC_CLANG_ROOT=$HOME/toolchains/zyc-clang" >> $GITHUB_ENV
+          
+          # The path to the main Clang binaries
+          echo "ZYC_CLANG_BIN=$HOME/toolchains/zyc-clang/bin" >> $GITHUB_ENV
 
-      - name: Clean Kernel Source
+          # Set PATH to include Zyc Clang's main bin directory
+          echo "PATH=$HOME/toolchains/zyc-clang/bin:$PATH" >> $GITHUB_ENV # Prepend Zyc Clang to PATH
+
+          # Explicitly tell the kernel's build system to use Zyc Clang's binaries.
+          echo "CC=$HOME/toolchains/zyc-clang/bin/clang" >> $GITHUB_ENV
+          echo "LD=$HOME/toolchains/zyc-clang/bin/ld.lld" >> $GITHUB_ENV
+          echo "AR=$HOME/toolchains/zyc-clang/bin/llvm-ar" >> $GITHUB_ENV
+          echo "NM=$HOME/toolchains/zyc-clang/bin/llvm-nm" >> $GITHUB_ENV
+          echo "OBJCOPY=$HOME/toolchains/zyc-clang/bin/llvm-objcopy" >> $GITHUB_ENV
+          echo "OBJDUMP=$HOME/toolchains/zyc-clang/bin/llvm-objdump" >> $GITHUB_ENV
+          echo "STRIP=$HOME/toolchains/zyc-clang/bin/llvm-strip" >> $GITHUB_ENV
+
+          # Target triple for Clang.
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+
+          # CROSS_COMPILE for AArch64 (points to binutils directory within Zyc Clang)
+          echo "CROSS_COMPILE=$HOME/toolchains/zyc-clang/aarch64-linux-gnu/bin/" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=$HOME/toolchains/zyc-clang/arm-linux-gnueabi/bin/" >> $GITHUB_ENV
+
+          # CLANG_GCC_TOOLCHAIN tells Clang where its supporting GNU-like toolchain/sysroot is.
+          echo "CLANG_GCC_TOOLCHAIN=$HOME/toolchains/zyc-clang/aarch64-linux-gnu" >> $GITHUB_ENV
+
+
+      - name: Configure and Compile Kernel
+        working-directory: ./kernel_source
         run: |
-          cd kernel_source
-          make mrproper
-          make clean
+          # Clean the kernel source (important for a fresh build)
+          make O=out mrproper
 
-      - name: Create Output Directory
-        run: mkdir kernel_source/out
+          # Configure the kernel
+          make O=out sm6250_defconfig \
+            LLVM=1 LLVM_IAS=1 \
+            DTC_EXT="$(command -v dtc)" \
+            CC="${CC} --gcc-toolchain=${CLANG_GCC_TOOLCHAIN}"
 
-      - name: Configure Kernel
+          # Compile the kernel
+          make O=out -j$(nproc) \
+            LLVM=1 LLVM_IAS=1 \
+            DTC_EXT="$(command -v dtc)" \
+            CC="${CC} --gcc-toolchain=${CLANG_GCC_TOOLCHAIN}"
+
+      - name: Package with AnyKernel3
+        working-directory: ./AnyKernel3
         run: |
-          cd kernel_source
-          make O=out ARCH=arm64 SUBARCH=arm64 vendor/atoll-perf_defconfig
+          # Define paths relative to AnyKernel3 directory
+          KERNEL_DIR="../kernel_source/out/arch/arm64/boot"
+          
+          # Copy compiled kernel image
+          # Common image names: Image, Image.gz, Image.gz-dtb
+          # Using Image.gz-dtb as it's common for Qualcomm devices. Verify this path if compilation fails.
+          cp "${KERNEL_DIR}/Image.gz-dtb" ./
+          
+          # If your device needs a separate dtbo.img, uncomment and copy it here:
+          # cp "${KERNEL_DIR}/dtbo.img" ./ 
 
-      - name: Compile Kernel
-        run: |
-          cd kernel_source
-          export KBUILD_BUILD_USER="MINHAZ"
-          export KBUILD_BUILD_HOST="POTATO"
-          export USE_CCACHE=1
-          export CCACHE_EXEC=$(which ccache)
-          export CC="ccache aarch64-none-linux-gnu-gcc"
-          make -j$(nproc) O=out ARCH=arm64 SUBARCH=arm64
+          # Optional: Adjust AnyKernel3 properties (e.g., kernel string, device names)
+          # These lines can be uncommented and modified to customize the flashable zip's behavior/info
+          # sed -i 's|kernel.string=.*|kernel.string=MyCustomSM6250Kernel-$(date +%Y%m%d)|g' anykernel.sh
+          # sed -i 's|device.name1=.*|device.name1=sm6250|g' anykernel.sh
+          # sed -i 's|device.name2=.*|device.name2=Redmi Note 9 Pro|g' anykernel.sh # Example for a specific device
 
-      - name: Customize Anykernel3
-        run: |
-          cd anykernel3
-          sed -i 's/kernel.string=.*/kernel.string=OSS Kernel/' anykernel.sh
-          sed -i 's/kernel.compiler=.*/kernel.compiler=aarch64-none-linux-gnu-gcc (GCC) 14.3.0/' anykernel.sh # Adjust compiler version if different
+          # Zip the AnyKernel3 package
+          zip -r9 "sm6250-kernel-$(date +%Y%m%d-%H%M).zip" . -x .git .github
 
-      - name: Package Kernel
-        run: |
-          cp kernel_source/out/arch/arm64/boot/Image.gz anykernel3/
-          cp kernel_source/out/arch/arm64/boot/dtbo.img anykernel3/
-          cp kernel_source/out/arch/arm64/boot/dtb.img anykernel3/
-          find kernel_source/out/modules -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \; || true # Copy modules if they exist
-          cd anykernel3
-          zip -r9 "OSS-Kernel-Curtana-${{ github.run_id }}.zip" * -x .git
-
-      - name: Upload Flashable Zip
+      - name: Upload Kernel as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OSS-Kernel-Curtana
-          path: anykernel3/OSS-Kernel-Curtana-*.zip
+          name: sm6250-kernel-zip
+          path: AnyKernel3/sm6250-kernel-*.zip # Upload the generated ZIP
+          retention-days: 7 # Keep the artifact for 7 days (adjust as needed)
