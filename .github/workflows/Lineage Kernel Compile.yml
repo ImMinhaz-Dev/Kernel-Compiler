@@ -31,8 +31,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential git zip python3 ccache flex bison bc cpio kmod \
-            libncurses6 libelf-dev openssl device-tree-compiler unzip xz-utils
+            build-essential git python3 ccache flex bison bc cpio kmod \
+            ncurses libelf-dev openssl device-tree-compiler android-tools unzip xz-utils
+
+          # Symlink python to python3 for older scripts if necessary
+          sudo ln -s /usr/bin/python3 /usr/bin/python || true
 
       - name: Download and Extract Zyc Clang
         env:
@@ -43,13 +46,14 @@ jobs:
           echo "Downloading Zyc Clang from GitHub Releases..."
           curl -L -o "$HOME/toolchains/${{ env.ZYC_CLANG_FILENAME }}" "https://github.com/ZyCromerZ/Clang/releases/download/${{ env.ZYC_CLANG_RELEASE_TAG }}/${{ env.ZYC_CLANG_FILENAME }}"
 
-          echo "Extracting Zyc Clang..."
+          echo "Extracting Zyc Clang directly into toolchains directory..."
           tar -xf "$HOME/toolchains/${{ env.ZYC_CLANG_FILENAME }}" -C "$HOME/toolchains"
           
-          # Verify Zyc Clang structure
+          # Verify Zyc Clang structure (now checking directly in $HOME/toolchains)
           ls -l "$HOME/toolchains/bin/clang" || { echo "Zyc Clang clang binary not found!"; exit 1; }
-          ls -l "$HOME/toolchains/aarch64-linux-gnu/bin/ar" || { echo "Zyc Clang aarch64-linux-gnu ar binary not found!"; exit 1; }
-          ls -l "$HOME/toolchains/arm-linux-gnueabi/bin/ar" || { echo "Zyc Clang arm-linux-gnueabi ar binary not found!"; exit 1; }
+          # Now, let's also verify an llvm-prefixed binutils tool
+          ls -l "$HOME/toolchains/bin/llvm-ar" || { echo "Zyc Clang llvm-ar binary not found! Check toolchain contents."; exit 1; }
+
 
       - name: Setup Environment Variables for Kernel Compilation
         shell: bash # Explicitly use bash for consistent behavior
@@ -59,7 +63,7 @@ jobs:
           echo "KBUILD_BUILD_USER=MINHAZ" >> $GITHUB_ENV
           echo "KBUILD_BUILD_HOST=MANJARO-i3" >> $GITHUB_ENV
 
-          # Path to Zyc Clang installation's root directory
+          # Path to Zyc Clang installation's root directory.
           echo "ZYC_CLANG_ROOT=$HOME/toolchains" >> $GITHUB_ENV
           
           # The path to the main Clang binaries
@@ -68,7 +72,7 @@ jobs:
           # Set PATH to include Zyc Clang's main bin directory
           echo "PATH=$HOME/toolchains/bin:$PATH" >> $GITHUB_ENV # Prepend Zyc Clang to PATH
 
-          # Explicitly tell the kernel's build system to use Zyc Clang's binaries.
+          # Explicitly tell the kernel's build system to use Zyc Clang's binaries (llvm-prefixed)
           echo "CC=$HOME/toolchains/bin/clang" >> $GITHUB_ENV
           echo "LD=$HOME/toolchains/bin/ld.lld" >> $GITHUB_ENV
           echo "AR=$HOME/toolchains/bin/llvm-ar" >> $GITHUB_ENV
@@ -77,15 +81,12 @@ jobs:
           echo "OBJDUMP=$HOME/toolchains/bin/llvm-objdump" >> $GITHUB_ENV
           echo "STRIP=$HOME/toolchains/bin/llvm-strip" >> $GITHUB_ENV
 
-          # Target triple for Clang.
+          # Target triple for Clang. This tells Clang what architecture to target.
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-          # CROSS_COMPILE for AArch64 (points to binutils directory within Zyc Clang)
-          echo "CROSS_COMPILE=$HOME/toolchains/aarch64-linux-gnu/bin/" >> $GITHUB_ENV
-          echo "CROSS_COMPILE_ARM32=$HOME/toolchains/arm-linux-gnueabi/bin/" >> $GITHUB_ENV
-
-          # CLANG_GCC_TOOLCHAIN tells Clang where its supporting GNU-like toolchain/sysroot is.
-          echo "CLANG_GCC_TOOLCHAIN=$HOME/toolchains/aarch64-linux-gnu" >> $GITHUB_ENV
+          # Remove CROSS_COMPILE and CLANG_GCC_TOOLCHAIN as they point to paths that don't exist
+          # and are usually not needed for a pure LLVM toolchain setup.
+          # The kernel makefiles should infer the necessary paths from CLANG_TRIPLE and LLVM=1.
 
 
       - name: Configure and Compile Kernel
@@ -95,16 +96,16 @@ jobs:
           make O=out mrproper
 
           # Configure the kernel
-          make O=out vendor/atoll-perf_defconfig \
+          # Removed --gcc-toolchain as it's no longer needed or set
+          make O=out sm6250_defconfig \
             LLVM=1 LLVM_IAS=1 \
-            DTC_EXT="$(command -v dtc)" \
-            CC="${CC} --gcc-toolchain=${CLANG_GCC_TOOLCHAIN}"
+            DTC_EXT="$(command -v dtc)"
 
           # Compile the kernel
+          # Removed --gcc-toolchain as it's no longer needed or set
           make O=out -j$(nproc) \
             LLVM=1 LLVM_IAS=1 \
-            DTC_EXT="$(command -v dtc)" \
-            CC="${CC} --gcc-toolchain=${CLANG_GCC_TOOLCHAIN}"
+            DTC_EXT="$(command -v dtc)"
 
       - name: Package with AnyKernel3
         working-directory: ./AnyKernel3
@@ -113,16 +114,12 @@ jobs:
           KERNEL_DIR="../kernel_source/out/arch/arm64/boot"
           
           # Copy compiled kernel image
-          # Common image names: Image, Image.gz, Image.gz-dtb
-          # Using Image.gz-dtb as it's common for Qualcomm devices. Verify this path if compilation fails.
-          cp "${KERNEL_DIR}/Image.gz" ./
+          cp "${KERNEL_DIR}/Image.gz-dtb" ./
           
           # If your device needs a separate dtbo.img, uncomment and copy it here:
-          cp "${KERNEL_DIR}/dtbo.img" ./ 
-          cp "${KERNEL_DIR}/dtb.img" ./ 
+          # cp "${KERNEL_DIR}/dtbo.img" ./ 
 
           # Optional: Adjust AnyKernel3 properties (e.g., kernel string, device names)
-          # These lines can be uncommented and modified to customize the flashable zip's behavior/info
           # sed -i 's|kernel.string=.*|kernel.string=MyCustomSM6250Kernel-$(date +%Y%m%d)|g' anykernel.sh
           # sed -i 's|device.name1=.*|device.name1=sm6250|g' anykernel.sh
           # sed -i 's|device.name2=.*|device.name2=Redmi Note 9 Pro|g' anykernel.sh # Example for a specific device
