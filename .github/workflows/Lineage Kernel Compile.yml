@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git python3 ccache flex bison bc cpio kmod \
-            libncurses6 libelf-dev openssl device-tree-compiler zip unzip xz-utils
+            ncurses libelf-dev openssl device-tree-compiler zip unzip xz-utils
 
       - name: Download and Extract Zyc Clang
         env:
@@ -48,7 +48,19 @@ jobs:
           
           # Verify Zyc Clang structure
           ls -l "$HOME/toolchains/bin/clang" || { echo "Zyc Clang clang binary not found!"; exit 1; }
-          ls -l "$HOME/toolchains/bin/llvm-ar" || { echo "Zyc Clang llvm-ar binary not found! Check toolchain contents."; exit 1; }
+          
+          # Check for both llvm-ar and aarch64-linux-gnu-ar in the main bin directory
+          if [ -f "$HOME/toolchains/bin/llvm-ar" ]; then
+            echo "Found $HOME/toolchains/bin/llvm-ar"
+          else
+            echo "llvm-ar not found, trying aarch64-linux-gnu-ar..."
+            if [ -f "$HOME/toolchains/bin/aarch64-linux-gnu-ar" ]; then
+              echo "Found $HOME/toolchains/bin/aarch64-linux-gnu-ar"
+            else
+              echo "Neither llvm-ar nor aarch64-linux-gnu-ar found in $HOME/toolchains/bin/! Check toolchain contents."
+              exit 1
+            fi
+          fi
 
 
       - name: Setup Environment Variables for Kernel Compilation
@@ -60,7 +72,6 @@ jobs:
           echo "KBUILD_BUILD_HOST=github-runner" >> $GITHUB_ENV
 
           # Path to Zyc Clang installation's root directory.
-          # These will be used to construct paths for make commands.
           echo "ZYC_CLANG_ROOT=$HOME/toolchains" >> $GITHUB_ENV
           
           # Set PATH to include Zyc Clang's main bin directory (for commands like clang --version)
@@ -69,8 +80,6 @@ jobs:
           # Target triple for Clang. This tells Clang what architecture to target.
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-          # CC, LD, AR, etc. will now be passed directly to 'make' commands.
-
 
       - name: Configure and Compile Kernel
         working-directory: ./kernel_source
@@ -78,8 +87,29 @@ jobs:
           # Define common LLVM tool paths for reusability in make commands
           CLANG_BIN="${{ env.ZYC_CLANG_ROOT }}/bin"
           
-          # Clean the kernel source (important for a fresh build)
-          make O=out mrproper
+          # Determine the correct 'ar' binary to use
+          # This logic will use llvm-ar if found, otherwise fall back to aarch64-linux-gnu-ar
+          KERNEL_AR="${CLANG_BIN}/llvm-ar" # Default to llvm-ar
+          if [ ! -f "${KERNEL_AR}" ]; then
+            if [ -f "${CLANG_BIN}/aarch64-linux-gnu-ar" ]; then
+              KERNEL_AR="${CLANG_BIN}/aarch64-linux-gnu-ar"
+              echo "Using aarch64-linux-gnu-ar as AR tool."
+            else
+              echo "Error: Neither llvm-ar nor aarch64-linux-gnu-ar found. Build cannot proceed."
+              exit 1
+            fi
+          else
+            echo "Using llvm-ar as AR tool."
+          fi
+
+          # --- Start Enhanced Cleaning ---
+          echo "Performing deep clean of kernel source and output directory..."
+          # Ensure we are in the kernel_source directory before running mrproper
+          # rm -rf out is crucial to clear previous build artifacts
+          rm -rf out
+          make mrproper
+          # --- End Enhanced Cleaning ---
+
 
           # --- FIX FOR STACK PROTECTOR ERROR ---
           # Disable CONFIG_CC_STACKPROTECTOR_STRONG due to compiler compatibility check
@@ -92,7 +122,7 @@ jobs:
             DTC_EXT="$(command -v dtc)" \
             CC="${CLANG_BIN}/clang" \
             LD="${CLANG_BIN}/ld.lld" \
-            AR="${CLANG_BIN}/llvm-ar" \
+            AR="${KERNEL_AR}" \
             NM="${CLANG_BIN}/llvm-nm" \
             OBJCOPY="${CLANG_BIN}/llvm-objcopy" \
             OBJDUMP="${CLANG_BIN}/llvm-objdump" \
@@ -104,7 +134,7 @@ jobs:
             DTC_EXT="$(command -v dtc)" \
             CC="${CLANG_BIN}/clang" \
             LD="${CLANG_BIN}/ld.lld" \
-            AR="${CLANG_BIN}/llvm-ar" \
+            AR="${KERNEL_AR}" \
             NM="${CLANG_BIN}/llvm-nm" \
             OBJCOPY="${CLANG_BIN}/llvm-objcopy" \
             OBJDUMP="${CLANG_BIN}/llvm-objdump" \
