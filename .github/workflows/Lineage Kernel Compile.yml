@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git python3 ccache flex bison bc cpio kmod \
-            ncurses libelf-dev openssl device-tree-compiler zip unzip xz-utils
+            libncurses6 libelf-dev openssl device-tree-compiler zip unzip xz-utils
 
       - name: Download and Extract Zyc Clang
         env:
