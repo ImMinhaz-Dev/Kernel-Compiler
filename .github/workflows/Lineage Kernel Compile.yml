@@ -32,10 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git python3 ccache flex bison bc cpio kmod \
-            ncurses libelf-dev openssl device-tree-compiler android-tools unzip xz-utils
-
-          # Symlink python to python3 for older scripts if necessary
-          sudo ln -s /usr/bin/python3 /usr/bin/python || true
+            libncurses6 libelf-dev openssl device-tree-compiler zip unzip xz-utils
 
       - name: Download and Extract Zyc Clang
         env:
@@ -60,8 +57,8 @@ jobs:
         run: |
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=MINHAZ" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=MANJARO-i3" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=GitHubActions" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=github-runner" >> $GITHUB_ENV
 
           # Path to Zyc Clang installation's root directory.
           echo "ZYC_CLANG_ROOT=$HOME/toolchains" >> $GITHUB_ENV
@@ -97,7 +94,7 @@ jobs:
 
           # Configure the kernel
           # Removed --gcc-toolchain as it's no longer needed or set
-          make O=out sm6250_defconfig \
+          make O=out vendor/atoll-perf_defconfig \
             LLVM=1 LLVM_IAS=1 \
             DTC_EXT="$(command -v dtc)"
 
@@ -114,10 +111,10 @@ jobs:
           KERNEL_DIR="../kernel_source/out/arch/arm64/boot"
           
           # Copy compiled kernel image
-          cp "${KERNEL_DIR}/Image.gz-dtb" ./
+          cp "${KERNEL_DIR}/Image.gz" ./
           
           # If your device needs a separate dtbo.img, uncomment and copy it here:
-          # cp "${KERNEL_DIR}/dtbo.img" ./ 
+          cp "${KERNEL_DIR}/dtbo.img" ./ 
 
           # Optional: Adjust AnyKernel3 properties (e.g., kernel string, device names)
           # sed -i 's|kernel.string=.*|kernel.string=MyCustomSM6250Kernel-$(date +%Y%m%d)|g' anykernel.sh
