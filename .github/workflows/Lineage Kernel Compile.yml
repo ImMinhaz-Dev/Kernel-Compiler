@@ -6,7 +6,7 @@ on:
   workflow_dispatch: # Allows manual triggering from the GitHub Actions tab
   push:
     branches:
-      - lineage-22.2 # Trigger on push to your kernel's main development branch
+      - main # Trigger on push to your kernel's main development branch
 
 jobs:
   build_kernel:
@@ -61,8 +61,8 @@ jobs:
         run: |
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=GitHubActions" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=github-runner" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=MINHAZ" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=MANJARO-i3" >> $GITHUB_ENV
 
           # Path to Zyc Clang installation's root directory
           echo "ZYC_CLANG_ROOT=$HOME/toolchains/zyc-clang" >> $GITHUB_ENV
