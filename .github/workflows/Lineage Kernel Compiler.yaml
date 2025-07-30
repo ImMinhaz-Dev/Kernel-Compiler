@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ccache flex bison gcc-multilib zip unzip libxml2 kmod cpio openssl aarch64-linux-gnu-gcc bc libncurses-dev libssl-dev lz4 zlib1g-dev device-tree-compiler
+          sudo apt-get install -y build-essential ccache flex bison zip unzip libxml2 kmod cpio openssl gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu bc libncurses6 libssl-dev lz4 zlib1g-dev device-tree-compiler
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
