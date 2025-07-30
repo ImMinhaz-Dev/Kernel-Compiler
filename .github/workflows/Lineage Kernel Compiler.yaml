@@ -1,0 +1,117 @@
+name: Lineage Kernel Compiler
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          repository: ImMinhaz-Dev/android_kernel_xiaomi_sm6250
+          ref: lineage-22.2
+          path: kernel
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache flex bison gcc-multilib zip unzip libxml2 kmod cpio openssl aarch64-linux-gnu-gcc bc libncurses-dev libssl-dev lz4 zlib1g-dev device-tree-compiler
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 5G
+
+      - name: Configure ccache
+        run: |
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          ccache -M 10G
+
+      - name: Download and setup Android NDK
+        run: |
+          curl -L -o android-ndk-r28c-linux.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip android-ndk-r28c-linux.zip -d /tmp
+          export NDK_HOME="/tmp/android-ndk-r28c"
+          export PATH="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+
+      - name: Verify toolchain paths
+        run: |
+          which clang
+          which ld.lld
+          which llvm-ar
+          which llvm-nm
+          which llvm-objcopy
+          which llvm-objdump
+          which dtc
+          which aarch64-linux-gnu-gcc
+
+      - name: Clean kernel source
+        run: |
+          cd kernel
+          make mrproper
+          make clean
+          rm -rf out
+          mkdir -p out
+
+      - name: Generate kernel config
+        run: |
+          cd kernel
+          make O=out ARCH=arm64 CC="ccache clang" LD="ccache ld.lld" DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
+        env:
+          KBUILD_BUILD_USER: MINHAZ
+          KBUILD_BUILD_HOST: MANJARO-i3WM
+
+      - name: Compile kernel
+        run: |
+          cd kernel
+          make -j$(nproc --all) O=out ARCH=arm64 \
+            CC="ccache clang" \
+            LD="ccache ld.lld" \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            DTC_EXT=$(command -v dtc) \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILER=aarch64-linux-gnu- \
+            LLVM=1
+
+      - name: Checkout AnyKernel3
+        uses: actions/checkout@v4
+        with:
+          repository: ImMinhaz-Dev/anykernel3
+          ref: master
+          path: anykernel3
+
+      - name: Customize AnyKernel3
+        run: |
+          sed -i 's/kernel.compiler=Android NDK r28c/kernel.compiler=Custom Android NDK r28c/' anykernel3/anykernel.sh
+
+      - name: Create AnyKernel3 module directory
+        run: |
+          mkdir -p anykernel3/modules/system/lib/modules
+
+      - name: Copy kernel artifacts to AnyKernel3
+        run: |
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel3/ || echo "Image.gz not found"
+          cp kernel/out/arch/arm64/boot/dtbo.img anykernel3/ || echo "dtbo.img not found"
+          cp kernel/out/arch/arm64/boot/dtb.img anykernel3/ || echo "dtb.img not found"
+          find kernel/out -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \; || echo "No kernel modules found"
+
+      - name: Create flashable ZIP
+        run: |
+          cd anykernel3
+          zip -r9 ../kernel-curtana-lineage.zip * -x .git
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-curtana-lineage
+          path: kernel-curtana-lineage.zip
