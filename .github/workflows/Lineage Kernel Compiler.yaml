@@ -92,7 +92,7 @@ jobs:
 
       - name: Customize AnyKernel3
         run: |
-          sed -i 's/kernel.compiler=Android NDK r28c/kernel.compiler=Custom Android NDK r28c/' anykernel3/anykernel.sh
+          sed -i 's@kernel.compiler=Android NDK r28c@kernel.compiler=Custom Android NDK r28c@' anykernel3/anykernel.sh
 
       - name: Create AnyKernel3 module directory
         run: |
