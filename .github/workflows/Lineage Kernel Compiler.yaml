@@ -33,16 +33,16 @@ jobs:
           curl -sL "https://dl.google.com/android/repository/android-ndk-r28c-linux.zip" -o ndk.zip
           unzip -q ndk.zip -d $HOME/toolchain
           rm ndk.zip
-          # Add toolchain to PATH
+          # Add toolchain to the environment for future steps
+          echo "TOOLCHAIN_PATH=$HOME/toolchain/android-ndk-r28c/toolchains/llvm/prebuilt/linux-x86_64" >> $GITHUB_ENV
           echo "$HOME/toolchain/android-ndk-r28c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-          echo "Toolchain setup complete. Path:"
+          echo "Toolchain setup complete."
           which clang
 
       - name: Clone Kernel Source
         run: |
           echo "Cloning kernel source..."
           git clone --depth=1 https://github.com/ImMinhaz-Dev/android_kernel_xiaomi_sm6250.git -b lineage-22.2 kernel
-          cd kernel
 
       - name: Clean up build directory
         run: |
@@ -52,16 +52,15 @@ jobs:
           make clean
           rm -rf out
 
-      - name: Create output directory
-        run: |
-          cd kernel
-          mkdir -p out
-
       - name: Generate Kernel Config
         run: |
           cd kernel
           echo "Generating .config file..."
-          make O=out ARCH=arm64 CC=clang LD=ld.lld DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
+          make O=out ARCH=arm64 \
+            CC=clang \
+            LD=ld.lld \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            vendor/xiaomi/miatoll_defconfig
 
       - name: Compile Kernel
         run: |
@@ -72,15 +71,15 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           
+          # Explicitly point to the NDK's clang to avoid ambiguity
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang" \
             LD="ld.lld" \
-            AR="llvm-ar" \
-            NM="llvm-nm" \
-            OBJCOPY="llvm-objcopy" \
-            OBJDUMP="llvm-objdump" \
-            STRIP="llvm-strip" \
-            DTC_EXT=$(command -v dtc) \
+            AR="${TOOLCHAIN_PATH}/bin/llvm-ar" \
+            NM="${TOOLCHAIN_PATH}/bin/llvm-nm" \
+            OBJCOPY="${TOOLCHAIN_PATH}/bin/llvm-objcopy" \
+            OBJDUMP="${TOOLCHAIN_PATH}/bin/llvm-objdump" \
+            STRIP="${TOOLCHAIN_PATH}/bin/llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
             CROSS_COMPILE="aarch64-linux-gnu-" \
             LLVM=1 \
@@ -94,7 +93,7 @@ jobs:
       - name: Customize anykernel.sh
         run: |
           echo "Customizing anykernel.sh..."
-          sed -i 's/kernel.compiler=.*$/kernel.compiler=Android NDK r28c/' anykernel/anykernel.sh
+          sed -i 's/kernel.compiler=.*$/kernel.compiler=NDK Clang (r28c)/' anykernel/anykernel.sh
 
       - name: Package Flashable Zip
         run: |
