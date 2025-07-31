@@ -77,7 +77,7 @@ jobs:
         run: |
           cd kernel
           export NDK_HOME=/tmp/android-ndk-r28c
-          make O=out ARCH=arm64 CC="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" LD="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
+          make O=out ARCH=arm64 CC="ccache clang" LD="ccache ld.lld" DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
         env:
           KBUILD_BUILD_USER: MINHAZ
           KBUILD_BUILD_HOST: MANJARO-i3WM
@@ -87,12 +87,12 @@ jobs:
           cd kernel
           export NDK_HOME=/tmp/android-ndk-r28c
           make -j$(nproc --all) O=out ARCH=arm64 \
-            CC="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ccache clang" \
-            LD="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ccache ld.lld" \
-            AR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
-            NM="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
-            OBJCOPY="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" \
-            OBJDUMP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump" \
+            CC="ccache clang" \
+            LD="ccache ld.lld" \
+            AR="llvm-ar" \
+            NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" \
+            OBJDUMP="llvm-objdump" \
             DTC_EXT=$(command -v dtc) \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILER=aarch64-linux-gnu- \
