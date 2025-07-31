@@ -1,132 +1,118 @@
-name: Lineage Kernel Compiler
+# GitHub Actions workflow for compiling a LineageOS kernel
+# Trigger this workflow manually from the Actions tab in your GitHub repository.
+
+name: Lineage Kernel Compiling
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual triggering of the workflow
 
 jobs:
-  build:
+  build_kernel:
+    name: Build Kernel for Redmi Note 9 Pro (curtana)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout kernel source
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          repository: ImMinhaz-Dev/android_kernel_xiaomi_sm6250
-          ref: lineage-22.2
-          path: kernel
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ccache flex bison zip unzip libxml2 kmod cpio openssl gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu bc libncurses6 libssl-dev lz4 zlib1g-dev device-tree-compiler
+          sudo apt-get install -y bc build-essential zip curl libstdc++6 git wget python3 libssl-dev libncurses5-dev ccache imagemagick libtinfo5
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
+          key: ${{ github.job }}
           max-size: 5G
 
-      - name: Configure ccache
+      - name: Set up Toolchain (Android NDK)
         run: |
-          export USE_CCACHE=1
-          export CCACHE_EXEC=$(which ccache)
-          ccache -M 5G
+          echo "Setting up Android NDK toolchain..."
+          mkdir -p $HOME/toolchain
+          curl -sL "https://dl.google.com/android/repository/android-ndk-r28c-linux.zip" -o ndk.zip
+          unzip -q ndk.zip -d $HOME/toolchain
+          rm ndk.zip
+          # Add toolchain to PATH
+          echo "$HOME/toolchain/android-ndk-r28c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          echo "Toolchain setup complete. Path:"
+          which clang
 
-      - name: Download and setup Android NDK
+      - name: Clone Kernel Source
         run: |
-          curl -L -o android-ndk-r28c-linux.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
-          unzip android-ndk-r28c-linux.zip -d /tmp
-          export NDK_HOME=/tmp/android-ndk-r28c
-          export PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
-          chmod +x $NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/*
-          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
-          echo "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          echo "Cloning kernel source..."
+          git clone --depth=1 https://github.com/ImMinhaz-Dev/android_kernel_xiaomi_sm6250.git -b lineage-22.2 kernel
+          cd kernel
 
-      - name: Verify toolchain paths
-        run: |
-          export NDK_HOME=/tmp/android-ndk-r28c
-          if [ ! -f "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]; then
-            echo "Error: NDK Clang not found at $NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
-            exit 1
-          fi
-          echo "Clang path: $(which clang)"
-          echo "ld.lld path: $(which ld.lld)"
-          echo "llvm-ar path: $(which llvm-ar)"
-          echo "llvm-nm path: $(which llvm-nm)"
-          echo "llvm-objcopy path: $(which llvm-objcopy)"
-          echo "llvm-objdump path: $(which llvm-objdump)"
-          echo "dtc path: $(which dtc)"
-          echo "aarch64-linux-gnu-gcc path: $(which aarch64-linux-gnu-gcc)"
-          clang --version
-          if [[ "$(which clang)" != "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]]; then
-            echo "Error: System Clang is being used instead of NDK Clang"
-            exit 1
-          fi
-
-      - name: Clean kernel source
+      - name: Clean up build directory
         run: |
           cd kernel
+          echo "Cleaning up previous build artifacts..."
           make mrproper
           make clean
           rm -rf out
+
+      - name: Create output directory
+        run: |
+          cd kernel
           mkdir -p out
 
-      - name: Generate kernel config
+      - name: Generate Kernel Config
         run: |
           cd kernel
-          export NDK_HOME=/tmp/android-ndk-r28c
-          make O=out ARCH=arm64 CC="ccache clang" LD="ccache ld.lld" DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
-        env:
-          KBUILD_BUILD_USER: MINHAZ
-          KBUILD_BUILD_HOST: MANJARO-i3WM
+          echo "Generating .config file..."
+          make O=out ARCH=arm64 CC=clang LD=ld.lld DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
 
-      - name: Compile kernel
+      - name: Compile Kernel
         run: |
           cd kernel
-          export NDK_HOME=/tmp/android-ndk-r28c
+          echo "Starting kernel compilation..."
+          export KBUILD_BUILD_USER="MINHAZ"
+          export KBUILD_BUILD_HOST="MANJARO-i3WM"
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang" \
-            LD="ccache ld.lld" \
+            LD="ld.lld" \
             AR="llvm-ar" \
             NM="llvm-nm" \
             OBJCOPY="llvm-objcopy" \
             OBJDUMP="llvm-objdump" \
+            STRIP="llvm-strip" \
             DTC_EXT=$(command -v dtc) \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILER=aarch64-linux-gnu- \
-            LLVM=1
+            CLANG_TRIPLE="aarch64-linux-gnu-" \
+            CROSS_COMPILE="aarch64-linux-gnu-" \
+            LLVM=1 \
+            LLVM_IAS=1
 
-      - name: Checkout AnyKernel3
-        uses: actions/checkout@v4
+      - name: Clone AnyKernel3
+        run: |
+          echo "Cloning AnyKernel3..."
+          git clone --depth=1 https://github.com/ImMinhaz-Dev/anykernel3.git -b master anykernel
+
+      - name: Customize anykernel.sh
+        run: |
+          echo "Customizing anykernel.sh..."
+          sed -i 's/kernel.compiler=.*$/kernel.compiler=Android NDK r28c/' anykernel/anykernel.sh
+
+      - name: Package Flashable Zip
+        run: |
+          echo "Packaging flashable zip..."
+          # Copy kernel images to AnyKernel3 directory
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+          cp kernel/out/arch/arm64/boot/dtb.img anykernel/
+          cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
+          
+          # Find and copy kernel modules if they exist
+          find kernel/out -name "*.ko" -exec cp {} anykernel/modules/system/lib/modules/ \;
+
+          # Zip the AnyKernel3 directory
+          cd anykernel
+          zip -r9 Flashable-Kernel-$(date +%Y%m%d-%H%M).zip * -x ".git*" "README.md"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
         with:
-          repository: ImMinhaz-Dev/anykernel3
-          ref: master
-          path: anykernel3
-
-      - name: Customize AnyKernel3
-        run: |
-          sed -i 's/kernel.compiler=Android NDK r28c/kernel.compiler=Custom Android NDK r28c/' anykernel3/anykernel.sh
-
-      - name: Create AnyKernel3 module directory
-        run: |
-          mkdir -p anykernel3/modules/system/lib/modules
-
-      - name: Copy kernel artifacts to AnyKernel3
-        run: |
-          cp kernel/out/arch/arm64/boot/Image.gz anykernel3/ || echo "Image.gz not found"
-          cp kernel/out/arch/arm64/boot/dtbo.img anykernel3/ || echo "dtbo.img not found"
-          cp kernel/out/arch/arm64/boot/dtb.img anykernel3/ || echo "dtb.img not found"
-          find kernel/out -name "*.ko" -exec cp {} anykernel3/modules/system/lib/modules/ \; || echo "No kernel modules found"
-
-      - name: Create flashable ZIP
-        run: |
-          cd anykernel3
-          zip -r9 ../kernel-curtana-lineage.zip * -x .git
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-curtana-lineage
-          path: kernel-curtana-lineage.zip
+          name: Flashable-Kernel-Zip
+          path: anykernel/Flashable-Kernel-*.zip
