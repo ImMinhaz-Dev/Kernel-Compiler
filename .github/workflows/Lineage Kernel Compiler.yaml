@@ -18,7 +18,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential zip curl libstdc++6 git wget python3 libssl-dev libncurses5-dev ccache gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu imagemagick
+          sudo apt-get install -y bc build-essential zip curl libstdc++6 git wget python3 libssl-dev libncurses5-dev ccache gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu device-tree-compiler imagemagick
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -59,6 +59,7 @@ jobs:
           make O=out ARCH=arm64 \
             CC=clang \
             LD=ld.lld \
+            DTC_EXT=$(command -v dtc) \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             vendor/xiaomi/miatoll_defconfig
 
@@ -81,6 +82,7 @@ jobs:
             OBJDUMP="${TOOLCHAIN_PATH}/bin/llvm-objdump" \
             STRIP="${TOOLCHAIN_PATH}/bin/llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
+            DTC_EXT=$(command -v dtc) \
             CROSS_COMPILE="aarch64-linux-gnu-" \
             LLVM=1 \
             LLVM_IAS=1
@@ -93,7 +95,7 @@ jobs:
       - name: Customize anykernel.sh
         run: |
           echo "Customizing anykernel.sh..."
-          sed -i 's/kernel.compiler=.*$/kernel.compiler=NDK Clang (r28c)/' anykernel/anykernel.sh
+          sed -i 's@kernel.compiler=.*$@kernel.compiler=NDK Clang (r28c)@' anykernel/anykernel.sh
 
       - name: Package Flashable Zip
         run: |
