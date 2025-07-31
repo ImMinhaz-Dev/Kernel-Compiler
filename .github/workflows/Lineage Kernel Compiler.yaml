@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ccache flex bison zip unzip libxml2 kmod cpio openssl gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu bc libncurses6 libssl-dev lz4 zlib1g-dev device-tree-compiler
+          sudo apt-get install -y build-essential ccache flex bison gcc-multilib zip unzip libxml2 kmod cpio openssl aarch64-linux-gnu-gcc bc libncurses-dev libssl-dev lz4 zlib1g-dev device-tree-compiler
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -32,7 +32,7 @@ jobs:
         run: |
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
-          ccache -M 10G
+          ccache -M 5G
 
       - name: Download and setup Android NDK
         run: |
@@ -40,17 +40,30 @@ jobs:
           unzip android-ndk-r28c-linux.zip -d /tmp
           export NDK_HOME=/tmp/android-ndk-r28c
           export PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+          chmod +x $NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/*
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Verify toolchain paths
         run: |
-          which clang
-          which ld.lld
-          which llvm-ar
-          which llvm-nm
-          which llvm-objcopy
-          which llvm-objdump
-          which dtc
-          which aarch64-linux-gnu-gcc
+          export NDK_HOME=/tmp/android-ndk-r28c
+          if [ ! -f "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]; then
+            echo "Error: NDK Clang not found at $NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+            exit 1
+          fi
+          echo "Clang path: $(which clang)"
+          echo "ld.lld path: $(which ld.lld)"
+          echo "llvm-ar path: $(which llvm-ar)"
+          echo "llvm-nm path: $(which llvm-nm)"
+          echo "llvm-objcopy path: $(which llvm-objcopy)"
+          echo "llvm-objdump path: $(which llvm-objdump)"
+          echo "dtc path: $(which dtc)"
+          echo "aarch64-linux-gnu-gcc path: $(which aarch64-linux-gnu-gcc)"
+          clang --version
+          if [[ "$(which clang)" != "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]]; then
+            echo "Error: System Clang is being used instead of NDK Clang"
+            exit 1
+          fi
 
       - name: Clean kernel source
         run: |
@@ -63,7 +76,8 @@ jobs:
       - name: Generate kernel config
         run: |
           cd kernel
-          make O=out ARCH=arm64 CC="ccache clang" LD="ccache ld.lld" DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
+          export NDK_HOME=/tmp/android-ndk-r28c
+          make O=out ARCH=arm64 CC="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" LD="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" DTC_EXT=$(command -v dtc) CLANG_TRIPLE=aarch64-linux-gnu- vendor/xiaomi/miatoll_defconfig
         env:
           KBUILD_BUILD_USER: MINHAZ
           KBUILD_BUILD_HOST: MANJARO-i3WM
@@ -71,13 +85,14 @@ jobs:
       - name: Compile kernel
         run: |
           cd kernel
+          export NDK_HOME=/tmp/android-ndk-r28c
           make -j$(nproc --all) O=out ARCH=arm64 \
-            CC="ccache clang" \
-            LD="ccache ld.lld" \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
+            CC="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ccache clang" \
+            LD="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ccache ld.lld" \
+            AR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+            NM="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+            OBJCOPY="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" \
+            OBJDUMP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump" \
             DTC_EXT=$(command -v dtc) \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILER=aarch64-linux-gnu- \
@@ -92,7 +107,7 @@ jobs:
 
       - name: Customize AnyKernel3
         run: |
-          sed -i 's@kernel.compiler=Android NDK r28c@kernel.compiler=Custom Android NDK r28c@' anykernel3/anykernel.sh
+          sed -i 's/kernel.compiler=Android NDK r28c/kernel.compiler=Custom Android NDK r28c/' anykernel3/anykernel.sh
 
       - name: Create AnyKernel3 module directory
         run: |
