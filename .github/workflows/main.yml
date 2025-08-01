@@ -1,0 +1,178 @@
+# This workflow compiles a custom LineageOS kernel and packages it into a flashable zip.
+# It is triggered on pushes and pull requests to the 'main' branch, or manually.
+
+name: Lineage Kernel Compiler
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      # Use a dedicated step to clone the kernel source. The initial checkout of the
+      # workflow's repo is not needed if the kernel source is in a different repo.
+      - name: ⚡ Clone Kernel Source
+        run: |
+          # Use a separate directory for cloning
+          git clone -b lineage-22.2 https://github.com/ImMinhaz-Dev/android_kernel_xiaomi_sm6250.git kernel_src
+          # It's good practice to ensure the directory exists and the clone was successful.
+          [ -d "kernel_src" ] || { echo "Failed to clone kernel source!"; exit 1; }
+      
+      # Clone AnyKernel3, which is used to create the flashable zip.
+      - name: 📥 Clone AnyKernel3
+        run: |
+          git clone -b master https://github.com/ImMinhaz-Dev/anykernel3.git anykernel
+          # Check for successful clone.
+          [ -d "anykernel" ] || { echo "Failed to clone AnyKernel!"; exit 1; }
+
+      # Install all the necessary dependencies for compiling the kernel.
+      - name: 📦 Install dependencies
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y --no-install-recommends \
+            python3-pip \
+            git \
+            zip \
+            unzip \
+            gcc \
+            g++ \
+            make \
+            ninja-build \
+            file \
+            bc \
+            bison \
+            flex \
+            libfl-dev \
+            libssl-dev \
+            libelf-dev \
+            wget \
+            build-essential \
+            python3-dev \
+            python3-setuptools \
+            rsync \
+            ccache \
+            llvm-dev \
+            # Corrected package names for ncurses development libraries.
+            libncursesw5-dev \
+            binutils-aarch64-linux-gnu \
+            device-tree-compiler \
+            android-sdk-libsparse-utils \
+            # This is an ARM32 GCC compiler.
+            gcc-arm-linux-gnueabi
+
+      # Install Clang from a specific version using a GitHub Action.
+      - name: 🔧 Install Clang from a Github action
+        uses: KyleMayes/install-llvm-action@v2.0.7
+        with:
+          version: "20.1.8"
+          directory: ${{ runner.temp }}/llvm
+
+      # Add the newly installed Clang binary to the system's PATH.
+      - name: 🔧 Add Clang to the PATH
+        run: |
+          echo "${{ runner.temp }}/llvm/bin" >> $GITHUB_PATH
+
+      # Use the mkdtimg tool from the kernel source tree.
+      - name: 🛠 Use repo's mkdtimg
+        run: |
+          # The path to mkdtimg is relative to the kernel source directory.
+          # We make it executable and then move it to a directory in the PATH.
+          chmod +x kernel_src/tools/mkdtimg
+          sudo mv kernel_src/tools/mkdtimg /usr/local/bin/
+      
+      # Get the device's codename and the kernel version.
+      - name: 🔍 Get device codename and kernel version
+        run: |
+          # Hardcoding the device codename is fine.
+          DEVICE_CODENAME=curtana
+          # We need to change into the kernel source directory to run 'make'.
+          cd kernel_src
+          KERNEL_VERSION=$(make kernelversion)
+
+          echo "Device Codename: $DEVICE_CODENAME"
+          echo "Kernel Version: $KERNEL_VERSION"
+
+          # Export these variables to the GitHub environment for use in later steps.
+          echo "DEVICE_CODENAME=$DEVICE_CODENAME" >> $GITHUB_ENV
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
+
+      # Enable ccache to speed up subsequent builds by caching compiled files.
+      - name: 🚀 Enable ccache to speed the build up
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 7G
+
+      # Build the kernel.
+      - name: 🛠️ Build the kernel
+        run: |
+          # Change to the kernel source directory.
+          cd kernel_src
+          
+          # Set the environment variables for the build.
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export KBUILD_COMPILER_STRING=$(clang --version | head -n 1)
+          export KBUILD_BUILD_USER="MINHAZ"
+          export KBUILD_BUILD_HOST="POTATO"
+          export KBUILD_BUILD_ID="CI-BUILD"
+
+          # Clean the output directory and generate the defconfig.
+          make O=out vendor/xiaomi/miatoll_defconfig
+          make O=out olddefconfig
+
+          # Enable CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE to build a combined image.
+          ./scripts/config --file out/.config -e CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE
+
+          # Build the kernel using Clang and the GNU toolchains.
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            CC="ccache clang" \
+            DTC_EXT=$(command -v dtc) \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            # Use consistent cross-compile prefixes that match the installed compilers.
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu-
+
+      # Package the compiled kernel and modules into a flashable zip.
+      - name: 🚀 Package the compiled kernel to AnyKernel3 then create the zip
+        run: |
+          # Go back to the root directory of the repository.
+          cd ..
+          
+          # Set a descriptive zip name. We'll use this for the release tag as well.
+          # The date is useful for versioning.
+          ZIP_NAME="Kernel-${{ env.DEVICE_CODENAME }}-${{ env.KERNEL_VERSION }}-$(date +%d%m%Y).zip"
+
+          # Copy the compiled kernel image and DTB to the AnyKernel3 directory.
+          # The path is relative to the root directory, so we don't need 'cd'.
+          cp kernel_src/out/arch/arm64/boot/Image.lz4-dtb anykernel/
+          
+          # Create the flashable zip.
+          cd anykernel
+          zip -r9 "$ZIP_NAME" ./*
+          mv "$ZIP_NAME" ../
+
+          # Export the zip name to the GitHub environment.
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+      # Publish the flashable zip to a GitHub release.
+      # We combine the two release steps into one, as it can handle creating a tag
+      # and uploading the file in a single action.
+      - name: 📤 Publish github release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+          tag_name: "v${{ env.KERNEL_VERSION }}-${{ env.DEVICE_CODENAME }}"
+          name: "Kernel ${{ env.KERNEL_VERSION }} for ${{ env.DEVICE_CODENAME }}"
+          draft: false
+          prerelease: false
