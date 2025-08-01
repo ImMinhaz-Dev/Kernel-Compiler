@@ -22,7 +22,7 @@ jobs:
       - name: ⚡ Clone Kernel Source
         run: |
           # Use a separate directory for cloning
-          git clone -b lineage-22.2 https://github.com/ImMinhaz-Dev/android_kernel_xiaomi_sm6250.git kernel_src
+          git clone -b --depth=1 lineage-22.2 https://github.com/ImMinhaz-Dev/android_kernel_xiaomi_sm6250.git kernel_src
           # It's good practice to ensure the directory exists and the clone was successful.
           [ -d "kernel_src" ] || { echo "Failed to clone kernel source!"; exit 1; }
       
@@ -61,7 +61,8 @@ jobs:
             ccache \
             llvm-dev \
             # Corrected package names for ncurses development libraries.
-            libncursesw5-dev \
+            libncurses5-dev \
+            libncurses6
             binutils-aarch64-linux-gnu \
             device-tree-compiler \
             android-sdk-libsparse-utils \
