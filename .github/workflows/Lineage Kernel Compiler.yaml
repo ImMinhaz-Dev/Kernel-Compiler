@@ -1,119 +1,141 @@
-# GitHub Actions workflow for compiling a LineageOS kernel
-# Trigger this workflow manually from the Actions tab in your GitHub repository.
-
-name: Lineage Kernel Compiling
+name: Lineage Kernel Compiler
 
 on:
-  workflow_dispatch: # Allows manual triggering of the workflow
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  build_kernel:
-    name: Build Kernel for Redmi Note 9 Pro (curtana)
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: ⚡ Checkout kernel's sourcecode
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: 💫 Clone Kernel Source
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bc build-essential zip curl libstdc++6 git wget python3 libssl-dev libncurses5-dev ccache gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu device-tree-compiler imagemagick
+         git clone -b lineage-22.2 https://github.com/ImMinhaz-Dev/android_kernel_xiaomi_sm6250.git kernel_src
+         rm -rf kernel_src/.git
 
-      - name: Setup ccache
+      - name: 📥 Clone AnyKernel3
+        run: |
+          git clone -b master https://github.com/ImMinhaz-Dev/anykernel3.git anykernel
+          rm -rf anykernel/.git
+        
+      - name: 📦 Install dépendencies
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y --no-install-recommends \
+          python3-pip \
+          git \
+          zip \
+          unzip \
+          gcc \
+          g++ \
+          make \
+          ninja-build \
+          file \
+          bc \
+          bison \
+          flex \
+          libfl-dev \
+          libssl-dev \
+          libelf-dev \
+          wget \
+          build-essential \
+          python3-dev \
+          python3-setuptools \
+          rsync \
+          ccache \
+          llvm-dev
+          sudo apt install flex libncurses6 libncurses5 binutils-aarch64-linux-gnu device-tree-compiler \
+          android-sdk-libsparse-utils
+          sudo apt install -y gcc-arm-linux-gnueabi
+          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+
+      - name: 🔧 Install Clang from a Github action
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20.1.8"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: 🔧 Add Clang to the PATH
+        run: |
+          echo "${{ runner.temp }}/llvm/bin" >> $GITHUB_PATH
+      
+      - name: 🛠 Use repo's mkdtimg
+        run: |
+          chmod +x tools/mkdtimg
+          sudo mv tools/mkdtimg /usr/local/bin/mkdtimg
+
+      - name: 🔍 Device's codename and kernel's version
+        run: |
+          DEVICE_CODENAME=curtana
+          KERNEL_VERSION=$(make kernelversion)
+
+          echo "Device Codename: $DEVICE_CODENAME"
+          echo "Kernel Version: $KERNEL_VERSION"
+
+          echo "DEVICE_CODENAME=$DEVICE_CODENAME" >> $GITHUB_ENV
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
+
+      - name: 🚀 Enable ccache to speed the build up
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ github.job }}
-          max-size: 5G
+          max-size: 7G
 
-      - name: Set up Toolchain (Android NDK)
+      - name: 🛠️ Build the kramel
         run: |
-          echo "Setting up Android NDK toolchain..."
-          mkdir -p $HOME/toolchain
-          curl -sL "https://dl.google.com/android/repository/android-ndk-r28c-linux.zip" -o ndk.zip
-          unzip -q ndk.zip -d $HOME/toolchain
-          rm ndk.zip
-          # Add toolchain to the environment for future steps
-          echo "TOOLCHAIN_PATH=$HOME/toolchain/android-ndk-r28c/toolchains/llvm/prebuilt/linux-x86_64" >> $GITHUB_ENV
-          echo "$HOME/toolchain/android-ndk-r28c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-          echo "Toolchain setup complete."
-          which clang
-
-      - name: Clone Kernel Source
-        run: |
-          echo "Cloning kernel source..."
-          git clone --depth=1 https://github.com/ImMinhaz-Dev/android_kernel_xiaomi_sm6250.git -b lineage-22.2 kernel
-
-      - name: Clean up build directory
-        run: |
-          cd kernel
-          echo "Cleaning up previous build artifacts..."
-          make mrproper
-          make clean
-          rm -rf out
-
-      - name: Generate Kernel Config
-        run: |
-          cd kernel
-          echo "Generating .config file..."
-          make O=out ARCH=arm64 \
-            CC=clang \
-            LD=ld.lld \
-            DTC_EXT=$(command -v dtc) \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            vendor/xiaomi/miatoll_defconfig
-
-      - name: Compile Kernel
-        run: |
-          cd kernel
-          echo "Starting kernel compilation..."
-          export KBUILD_BUILD_USER="MINHAZ"
-          export KBUILD_BUILD_HOST="MANJARO-i3WM"
-          export USE_CCACHE=1
+          cd kernel_src
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export KBUILD_COMPILER_STRING=$(clang --version | head -n 1)
           export CCACHE_EXEC=$(which ccache)
-          
-          # Explicitly point to the NDK's clang to avoid ambiguity
-          make -j$(nproc --all) O=out ARCH=arm64 \
-            CC="ccache clang" \
-            LD="ld.lld" \
-            AR="${TOOLCHAIN_PATH}/bin/llvm-ar" \
-            NM="${TOOLCHAIN_PATH}/bin/llvm-nm" \
-            OBJCOPY="${TOOLCHAIN_PATH}/bin/llvm-objcopy" \
-            OBJDUMP="${TOOLCHAIN_PATH}/bin/llvm-objdump" \
-            STRIP="${TOOLCHAIN_PATH}/bin/llvm-strip" \
-            CLANG_TRIPLE="aarch64-linux-gnu-" \
-            DTC_EXT=$(command -v dtc) \
-            CROSS_COMPILE="aarch64-linux-gnu-" \
-            LLVM=1 \
-            LLVM_IAS=1
+          export KBUILD_BUILD_USER="MINHAZ"
+          export KBUILD_BUILD_HOST="POTATO"
 
-      - name: Clone AnyKernel3
+          make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig V=1
+          make O=out ARCH=arm64 olddefconfig
+          ./scripts/config --file out/.config -e CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE
+
+          make -j$(nproc --all) O=out \
+          ARCH=arm64 \
+          CC="ccache clang" \
+          DTC_EXT=$(command -v dtc)
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-android- \
+          CROSS_COMPILE_ARM32=arm-linux-androideabi-
+
+      - name: 🚀 Copy the compiled kernel to AnyKernel3 then create the zip
         run: |
-          echo "Cloning AnyKernel3..."
-          git clone --depth=1 https://github.com/ImMinhaz-Dev/anykernel3.git -b master anykernel
+          ZIP_NAME="Kernel-${DEVICE_CODENAME}-${KERNEL_VERSION}-$(date +%d%m%Y).zip"
 
-      - name: Customize anykernel.sh
-        run: |
-          echo "Customizing anykernel.sh..."
-          sed -i 's@kernel.compiler=.*$@kernel.compiler=NDK Clang (r28c)@' anykernel/anykernel.sh
+          cp out/arch/arm64/boot/Image.lz4-dtb anykernel/
 
-      - name: Package Flashable Zip
-        run: |
-          echo "Packaging flashable zip..."
-          # Copy kernel images to AnyKernel3 directory
-          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
-          cp kernel/out/arch/arm64/boot/dtb.img anykernel/
-          cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
-          
-          # Find and copy kernel modules if they exist
-          find kernel/out -name "*.ko" -exec cp {} anykernel/modules/system/lib/modules/ \;
+          cd anykernel && zip -r9 $ZIP_NAME ./*
+          mv $ZIP_NAME ../
 
-          # Zip the AnyKernel3 directory
-          cd anykernel
-          zip -r9 Flashable-Kernel-$(date +%Y%m%d-%H%M).zip * -x ".git*" "README.md"
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - name: 📤 Publish github release
+        uses: softprops/action-gh-release@v2
         with:
-          name: Flashable-Kernel-Zip
-          path: anykernel/Flashable-Kernel-*.zip
+          files: ${{ env.ZIP_NAME }}
+          tag_name: "latest"
+          draft: false
+          prerelease: false
+
+      - name: 📤 Publish with tag associated to the kernel
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+          tag_name: "${{ env.ZIP_NAME }}"
+          draft: false
+          prerelease: false
